@@ -4,7 +4,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from nfpl_access_control import __version__
-from nfpl_access_control.api.routers import admin, authorization, health, identity, jobs
+from nfpl_access_control.api.routers import (
+    admin,
+    authorization,
+    health,
+    history,
+    identity,
+    jobs,
+)
 from nfpl_access_control.core.config import settings
 
 
@@ -30,6 +37,7 @@ def create_app(*, cors_allowed_origins: tuple[str, ...] | None = None) -> FastAP
     application.include_router(authorization.router, prefix="/v1")
     application.include_router(admin.router, prefix="/v1")
     application.include_router(jobs.router, prefix="/v1")
+    application.include_router(history.router, prefix="/v1")
     return application
 
 

@@ -27,6 +27,7 @@ from nfpl_access_control.models import (
     RolePermission,
     User,
 )
+from nfpl_access_control.services.audit import AuditService
 
 ROLE_SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9-]{2,63}$")
 
@@ -51,6 +52,7 @@ class RoleManagementService:
     def __init__(self, session: Session):
         self.session = session
         self.authorization = AuthorizationEngine(session)
+        self.audit = AuditService(session)
 
     def create_role(
         self,
@@ -61,10 +63,14 @@ class RoleManagementService:
         description: str,
         permissions: set[Permission],
     ) -> Role:
+        current_time = datetime.now(UTC)
         decision = self.authorization.authorize_admin(
-            actor, Permission.ROLE_MANAGE, requested_scope=Scope.global_scope()
+            actor,
+            Permission.ROLE_MANAGE,
+            requested_scope=Scope.global_scope(),
+            at=current_time,
         )
-        self._require_allowed(decision)
+        self._require_allowed(decision, actor, "role.create.denied", current_time)
         normalized_slug = slug.strip().lower()
         if not ROLE_SLUG_PATTERN.fullmatch(normalized_slug):
             raise RoleManagementValidationError(
@@ -92,6 +98,19 @@ class RoleManagementService:
             ],
         )
         self.session.add(role)
+        self.session.flush()
+        self.audit.record(
+            actor=actor,
+            action="role.created",
+            reason="Configurable role created.",
+            occurred_at=current_time,
+            decision=decision,
+            after={
+                "role_id": role.id,
+                "slug": role.slug,
+                "permissions": sorted(item.permission.value for item in role.permissions),
+            },
+        )
         self.session.flush()
         return role
 
@@ -122,13 +141,17 @@ class RoleManagementService:
         if not reason.strip():
             raise RoleManagementValidationError("A grant reason is required.")
         if actor.id == target_user_id:
-            raise RoleManagementError(
+            self._deny(
+                actor,
                 AuthorizationDecision(
                     allowed=False,
                     reason_code=ReasonCode.SELF_ESCALATION_FORBIDDEN,
                     explanation="Administrators cannot grant roles to themselves.",
                     permission=Permission.ACCESS_GRANT,
-                )
+                ),
+                "role.grant.denied",
+                current_time,
+                {"target_user_id": target_user_id, "role_slug": role_slug},
             )
 
         admin_decision = self.authorization.authorize_admin(
@@ -137,7 +160,13 @@ class RoleManagementService:
             requested_scope=scope,
             at=current_time,
         )
-        self._require_allowed(admin_decision)
+        self._require_allowed(
+            admin_decision,
+            actor,
+            "role.grant.denied",
+            current_time,
+            {"target_user_id": target_user_id, "role_slug": role_slug},
+        )
 
         target = self.session.get(User, target_user_id)
         if target is None or not target.is_active:
@@ -146,7 +175,8 @@ class RoleManagementService:
         if role is None:
             raise RoleManagementValidationError("The requested role does not exist.")
         if role.slug == ADMIN_ROLE:
-            raise RoleManagementError(
+            self._deny(
+                actor,
                 AuthorizationDecision(
                     allowed=False,
                     reason_code=ReasonCode.SENSITIVE_APPROVAL_REQUIRED,
@@ -154,7 +184,10 @@ class RoleManagementService:
                         "Admin grants require the independent sensitive-access approval flow."
                     ),
                     permission=Permission.ACCESS_GRANT,
-                )
+                ),
+                "role.grant.denied",
+                current_time,
+                {"target_user_id": target_user_id, "role_slug": role_slug},
             )
 
         duplicate = self.session.scalar(
@@ -207,6 +240,15 @@ class RoleManagementService:
         )
         self.session.add(assignment)
         self.session.flush()
+        self.audit.record(
+            actor=actor,
+            action="role.granted",
+            reason=reason.strip(),
+            occurred_at=current_time,
+            decision=admin_decision,
+            after=self._assignment_snapshot(assignment),
+        )
+        self.session.flush()
         return assignment
 
     def revoke_role(
@@ -243,8 +285,15 @@ class RoleManagementService:
             requested_scope=scope,
             at=current_time,
         )
-        self._require_allowed(decision)
+        self._require_allowed(
+            decision,
+            actor,
+            "role.revoke.denied",
+            current_time,
+            {"assignment_id": assignment.id},
+        )
 
+        before = self._assignment_snapshot(assignment)
         assignment.revoked_at = current_time
         assignment.revoked_by_user_id = actor.id
         assignment.revoke_reason = reason.strip()
@@ -257,12 +306,67 @@ class RoleManagementService:
             )
         )
         self.session.flush()
+        self.audit.record(
+            actor=actor,
+            action="role.revoked",
+            reason=reason.strip(),
+            occurred_at=current_time,
+            decision=decision,
+            before=before,
+            after=self._assignment_snapshot(assignment),
+        )
+        self.session.flush()
         return assignment
 
-    @staticmethod
-    def _require_allowed(decision: AuthorizationDecision) -> None:
+    def _require_allowed(
+        self,
+        decision: AuthorizationDecision,
+        actor: User,
+        action: str,
+        occurred_at: datetime,
+        context: dict[str, object] | None = None,
+    ) -> None:
         if not decision.allowed:
-            raise RoleManagementError(decision)
+            self._deny(actor, decision, action, occurred_at, context)
+
+    def _deny(
+        self,
+        actor: User,
+        decision: AuthorizationDecision,
+        action: str,
+        occurred_at: datetime,
+        context: dict[str, object] | None = None,
+    ) -> None:
+        self.audit.record(
+            actor=actor,
+            action=action,
+            reason=decision.explanation,
+            occurred_at=occurred_at,
+            decision=decision,
+            context=context,
+        )
+        self.session.flush()
+        raise RoleManagementError(decision)
+
+    @staticmethod
+    def _assignment_snapshot(assignment: RoleAssignment) -> dict[str, object]:
+        return {
+            "assignment_id": assignment.id,
+            "user_id": assignment.user_id,
+            "role_id": assignment.role_id,
+            "client_id": assignment.client_id,
+            "all_clients": assignment.all_clients,
+            "branch_id": assignment.branch_id,
+            "all_branches": assignment.all_branches,
+            "direction": assignment.direction.value if assignment.direction else None,
+            "all_directions": assignment.all_directions,
+            "mode": assignment.mode.value if assignment.mode else None,
+            "all_modes": assignment.all_modes,
+            "valid_from": assignment.valid_from.isoformat(),
+            "valid_until": (assignment.valid_until.isoformat() if assignment.valid_until else None),
+            "revoked_at": (assignment.revoked_at.isoformat() if assignment.revoked_at else None),
+            "version": assignment.version,
+        }
 
     @staticmethod
     def _require_aware(value: datetime, field_name: str) -> None:

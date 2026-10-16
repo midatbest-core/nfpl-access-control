@@ -32,6 +32,7 @@ from nfpl_access_control.models import (
     RoleAssignment,
     RolePermission,
     User,
+    UserAvailabilityEvent,
     UserKind,
 )
 from nfpl_access_control.services.audit import AuditService, job_snapshot
@@ -141,12 +142,26 @@ class WorkflowService:
         self._require_responsibility(
             actor, job, ResponsibilityType.CHECKER, Permission.JOB_CHECK, current_time
         )
-        self._require_version(job, expected_version, Permission.JOB_CHECK)
+        self._require_version(
+            actor, job, expected_version, Permission.JOB_CHECK, current_time, "job.check.denied"
+        )
         if job.stage is not JobStage.PREPARED:
-            self._stage_error(Permission.JOB_CHECK, "Only prepared jobs can be checked.")
+            self._stage_error(
+                actor,
+                job,
+                Permission.JOB_CHECK,
+                "Only prepared jobs can be checked.",
+                "job.check.denied",
+                current_time,
+            )
         if job.prepared_by_user_id is None:
             self._stage_error(
-                Permission.JOB_CHECK, "The current revision has no recorded preparer."
+                actor,
+                job,
+                Permission.JOB_CHECK,
+                "The current revision has no recorded preparer.",
+                "job.check.denied",
+                current_time,
             )
         if job.prepared_by_user_id == actor.id:
             self._deny(
@@ -201,9 +216,18 @@ class WorkflowService:
         self._require_responsibility(
             actor, job, ResponsibilityType.FILING_OFFICER, Permission.JOB_FILE, current_time
         )
-        self._require_version(job, expected_version, Permission.JOB_FILE)
+        self._require_version(
+            actor, job, expected_version, Permission.JOB_FILE, current_time, "job.file.denied"
+        )
         if job.stage is not JobStage.CHECKED or job.checked_by_user_id is None:
-            self._stage_error(Permission.JOB_FILE, "Only independently checked jobs can be filed.")
+            self._stage_error(
+                actor,
+                job,
+                Permission.JOB_FILE,
+                "Only independently checked jobs can be filed.",
+                "job.file.denied",
+                current_time,
+            )
         before = job_snapshot(job)
         job.stage = JobStage.FILED
         job.filed_by_user_id = actor.id
@@ -481,9 +505,23 @@ class WorkflowService:
             at=current_time,
         )
         self._require(decision, actor, "job.cancel.denied", current_time, job)
-        self._require_version(job, expected_version, Permission.JOB_CANCEL)
+        self._require_version(
+            actor,
+            job,
+            expected_version,
+            Permission.JOB_CANCEL,
+            current_time,
+            "job.cancel.denied",
+        )
         if job.stage is JobStage.CANCELLED:
-            self._stage_error(Permission.JOB_CANCEL, "The job is already cancelled.")
+            self._stage_error(
+                actor,
+                job,
+                Permission.JOB_CANCEL,
+                "The job is already cancelled.",
+                "job.cancel.denied",
+                current_time,
+            )
         if not reason.strip():
             raise WorkflowValidationError("A cancellation reason is required.")
         before = job_snapshot(job)
@@ -590,15 +628,36 @@ class WorkflowService:
             )
         if request.status is not ExceptionalRequestStatus.PENDING:
             raise WorkflowConflictError("The exceptional request is no longer pending.")
-        self._require_version(job, expected_version, permission)
+        self._require_version(
+            actor,
+            job,
+            expected_version,
+            permission,
+            current_time,
+            "job.exception_approval.denied",
+        )
         before = job_snapshot(job)
         if request.action is ExceptionalAction.CANCEL:
             if job.stage is not JobStage.FILED:
-                self._stage_error(permission, "The filed job state changed before approval.")
+                self._stage_error(
+                    actor,
+                    job,
+                    permission,
+                    "The filed job state changed before approval.",
+                    "job.exception_approval.denied",
+                    current_time,
+                )
             job.stage = JobStage.CANCELLED
         else:
             if job.stage not in {JobStage.FILED, JobStage.CANCELLED}:
-                self._stage_error(permission, "The job can no longer be reopened.")
+                self._stage_error(
+                    actor,
+                    job,
+                    permission,
+                    "The job can no longer be reopened.",
+                    "job.exception_approval.denied",
+                    current_time,
+                )
             job.stage = JobStage.REOPENED
             job.checked_by_user_id = None
             job.checked_at = None
@@ -645,6 +704,16 @@ class WorkflowService:
             raise WorkflowValidationError("An availability change reason is required.")
         previous = employee.availability
         employee.availability = availability
+        self.session.add(
+            UserAvailabilityEvent(
+                user_id=employee.id,
+                previous_availability=previous,
+                availability=availability,
+                effective_at=current_time,
+                actor_user_id=actor.id,
+                reason=reason.strip(),
+            )
+        )
         self.audit.record(
             actor=actor,
             action="employee.availability_changed",
@@ -835,29 +904,43 @@ class WorkflowService:
         )
         self._require(decision, actor, action, at, job)
 
-    @staticmethod
-    def _require_version(job: Job, expected: int, permission: Permission) -> None:
+    def _require_version(
+        self,
+        actor: User,
+        job: Job,
+        expected: int,
+        permission: Permission,
+        at: datetime,
+        action: str,
+    ) -> None:
         if expected != job.version:
-            raise WorkflowError(
-                AuthorizationDecision(
-                    allowed=False,
-                    reason_code=ReasonCode.STALE_VERSION,
-                    explanation="The job changed since it was opened. Reload and try again.",
-                    permission=permission,
-                    job_visible=True,
-                )
+            self._deny(
+                actor,
+                job,
+                permission,
+                ReasonCode.STALE_VERSION,
+                "The job changed since it was opened. Reload and try again.",
+                action,
+                at,
             )
 
-    @staticmethod
-    def _stage_error(permission: Permission, explanation: str) -> None:
-        raise WorkflowError(
-            AuthorizationDecision(
-                allowed=False,
-                reason_code=ReasonCode.INVALID_STAGE,
-                explanation=explanation,
-                permission=permission,
-                job_visible=True,
-            )
+    def _stage_error(
+        self,
+        actor: User,
+        job: Job,
+        permission: Permission,
+        explanation: str,
+        action: str,
+        at: datetime,
+    ) -> None:
+        self._deny(
+            actor,
+            job,
+            permission,
+            ReasonCode.INVALID_STAGE,
+            explanation,
+            action,
+            at,
         )
 
     @staticmethod
@@ -911,9 +994,18 @@ class WorkflowService:
             self._require_responsibility(
                 actor, job, ResponsibilityType.MAKER, permission, current_time
             )
-        self._require_version(job, expected_version, permission)
+        self._require_version(
+            actor, job, expected_version, permission, current_time, "job.update.denied"
+        )
         if job.stage in {JobStage.FILED, JobStage.CANCELLED}:
-            self._stage_error(permission, "Filed or cancelled jobs cannot be edited normally.")
+            self._stage_error(
+                actor,
+                job,
+                permission,
+                "Filed or cancelled jobs cannot be edited normally.",
+                "job.update.denied",
+                current_time,
+            )
         before = job_snapshot(job)
         if goods_description is not None:
             job.goods_description = goods_description.strip()
@@ -957,10 +1049,22 @@ class WorkflowService:
         self._require_responsibility(
             actor, job, ResponsibilityType.MAKER, Permission.JOB_PREPARE, current_time
         )
-        self._require_version(job, expected_version, Permission.JOB_PREPARE)
+        self._require_version(
+            actor,
+            job,
+            expected_version,
+            Permission.JOB_PREPARE,
+            current_time,
+            "job.prepare.denied",
+        )
         if job.stage not in {JobStage.CONFIRMED, JobStage.PREPARED, JobStage.REOPENED}:
             self._stage_error(
-                Permission.JOB_PREPARE, "Only open preparation work can be submitted."
+                actor,
+                job,
+                Permission.JOB_PREPARE,
+                "Only open preparation work can be submitted.",
+                "job.prepare.denied",
+                current_time,
             )
         if not checklist_data:
             raise WorkflowValidationError("Checklist data is required.")

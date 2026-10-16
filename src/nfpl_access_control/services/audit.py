@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime
 
 from sqlalchemy.orm import Session
 
 from nfpl_access_control.authorization import AuthorizationDecision
-from nfpl_access_control.models import AuditEvent, Job, User
+from nfpl_access_control.models import AuditEvent, Job, JobVersion, User
 
 
 def job_snapshot(job: Job) -> dict[str, object]:
@@ -21,7 +22,7 @@ def job_snapshot(job: Job) -> dict[str, object]:
         "stage": job.stage.value,
         "goods_description": job.goods_description,
         "container_reference": job.container_reference,
-        "checklist_data": job.checklist_data,
+        "checklist_data": deepcopy(job.checklist_data),
         "checklist_revision": job.checklist_revision,
         "prepared_by_user_id": job.prepared_by_user_id,
         "checked_by_user_id": job.checked_by_user_id,
@@ -57,6 +58,19 @@ class AuditService:
                     "explanation": decision.explanation,
                 }
             )
+        affected_version = job.version if job is not None else None
+        if job is not None and after is not None:
+            self.session.add(
+                JobVersion(
+                    job_id=job.id,
+                    version_number=job.version,
+                    recorded_at=occurred_at,
+                    actor_user_id=actor.id,
+                    action=action,
+                    reason=reason,
+                    snapshot=deepcopy(after),
+                )
+            )
         event = AuditEvent(
             job_id=job.id if job else None,
             actor_user_id=actor.id,
@@ -66,6 +80,8 @@ class AuditService:
             before_state=before,
             after_state=after,
             authorization_context=authorization_context,
+            affected_job_version=affected_version,
+            denied=decision is not None and not decision.allowed,
         )
         self.session.add(event)
         return event

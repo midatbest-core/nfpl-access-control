@@ -23,8 +23,8 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 def _raise_management_error(error: Exception, session: DatabaseSession) -> None:
-    session.rollback()
     if isinstance(error, RoleManagementError):
+        session.commit()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
@@ -32,6 +32,7 @@ def _raise_management_error(error: Exception, session: DatabaseSession) -> None:
                 "explanation": error.decision.explanation,
             },
         ) from error
+    session.rollback()
     if isinstance(error, RoleManagementConflictError | StaleDataError | IntegrityError):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

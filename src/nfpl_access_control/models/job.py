@@ -87,5 +87,6 @@ class Job(UuidPrimaryKeyMixin, TimestampMixin, Base):
     assignee = relationship("User", back_populates="assigned_jobs", foreign_keys=[assignee_id])
     responsibilities = relationship("JobResponsibility", back_populates="job")
     delegations = relationship("JobDelegation", back_populates="job")
+    versions = relationship("JobVersion", order_by="JobVersion.version_number", viewonly=True)
 
     __mapper_args__ = {"version_id_col": version}

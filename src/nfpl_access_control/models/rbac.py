@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    event,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -205,3 +206,9 @@ class RoleAssignmentEvent(UuidPrimaryKeyMixin, Base):
 
     assignment = relationship("RoleAssignment", back_populates="events")
     actor = relationship("User")
+
+
+@event.listens_for(RoleAssignmentEvent, "before_update")
+@event.listens_for(RoleAssignmentEvent, "before_delete")
+def _prevent_role_assignment_event_mutation(*_args: object) -> None:
+    raise RuntimeError("Role assignment events are append-only.")

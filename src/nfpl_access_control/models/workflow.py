@@ -6,6 +6,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Enum,
     ForeignKey,
@@ -21,6 +22,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from nfpl_access_control.db.base import Base
 from nfpl_access_control.models.base import UtcDateTime, UuidPrimaryKeyMixin, utc_now
 from nfpl_access_control.models.enums import (
+    EmployeeAvailability,
     ExceptionalAction,
     ExceptionalRequestStatus,
     ResponsibilityEventType,
@@ -171,9 +173,59 @@ class AuditEvent(UuidPrimaryKeyMixin, Base):
     before_state: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     after_state: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     authorization_context: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    affected_job_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    denied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class JobVersion(UuidPrimaryKeyMixin, Base):
+    __tablename__ = "job_versions"
+    __table_args__ = (
+        UniqueConstraint("job_id", "version_number", name="one_job_version"),
+        Index("ix_job_versions_job_time", "job_id", "recorded_at", "version_number"),
+    )
+
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
+    actor_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+
+
+class UserAvailabilityEvent(UuidPrimaryKeyMixin, Base):
+    __tablename__ = "user_availability_events"
+    __table_args__ = (
+        Index("ix_user_availability_events_user_time", "user_id", "effective_at", "id"),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    previous_availability: Mapped[EmployeeAvailability] = mapped_column(
+        enum_column(EmployeeAvailability, "previous_employee_availability", 16),
+        nullable=False,
+    )
+    availability: Mapped[EmployeeAvailability] = mapped_column(
+        enum_column(EmployeeAvailability, "availability_event_value", 16),
+        nullable=False,
+    )
+    effective_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
+    actor_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 @event.listens_for(AuditEvent, "before_update")
 @event.listens_for(AuditEvent, "before_delete")
-def _prevent_audit_mutation(*_args: object) -> None:
-    raise RuntimeError("Audit events are append-only.")
+@event.listens_for(JobVersion, "before_update")
+@event.listens_for(JobVersion, "before_delete")
+@event.listens_for(UserAvailabilityEvent, "before_update")
+@event.listens_for(UserAvailabilityEvent, "before_delete")
+@event.listens_for(JobResponsibilityEvent, "before_update")
+@event.listens_for(JobResponsibilityEvent, "before_delete")
+def _prevent_history_mutation(*_args: object) -> None:
+    raise RuntimeError("Historical records are append-only.")

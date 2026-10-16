@@ -28,6 +28,8 @@ from nfpl_access_control.models.workflow import (
     JobDelegation,
     JobResponsibility,
     JobResponsibilityEvent,
+    JobVersion,
+    UserAvailabilityEvent,
 )
 
 __all__ = [
@@ -46,6 +48,7 @@ __all__ = [
     "JobDelegation",
     "JobResponsibility",
     "JobResponsibilityEvent",
+    "JobVersion",
     "JobStage",
     "Permission",
     "Role",
@@ -55,5 +58,6 @@ __all__ = [
     "ResponsibilityEventType",
     "ResponsibilityType",
     "User",
+    "UserAvailabilityEvent",
     "UserKind",
 ]

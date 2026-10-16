@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import exists, false, or_, select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from nfpl_access_control.authorization.decisions import AuthorizationDecision, ReasonCode
 from nfpl_access_control.authorization.roles import ADMIN_ROLE
@@ -153,6 +153,40 @@ class AuthorizationEngine:
             )
         assert actor is not None
         return self._evaluate_permission(actor, permission, scope, evaluation_time)
+
+    @staticmethod
+    def job_scope_predicate(
+        actor: User | None,
+        permission: Permission,
+        *,
+        at: datetime,
+    ):
+        """Return a correlated Job policy predicate for bounded list queries."""
+
+        if actor is None or not actor.is_active or at.tzinfo is None or at.utcoffset() is None:
+            return false()
+        assignment = aliased(RoleAssignment)
+        role_permission = aliased(RolePermission)
+        return exists(
+            select(1)
+            .select_from(assignment)
+            .join(role_permission, role_permission.role_id == assignment.role_id)
+            .where(
+                assignment.user_id == actor.id,
+                role_permission.permission == permission,
+                assignment.valid_from <= at,
+                or_(assignment.valid_until.is_(None), assignment.valid_until > at),
+                or_(assignment.revoked_at.is_(None), assignment.revoked_at > at),
+                or_(assignment.all_clients.is_(True), assignment.client_id == Job.client_id),
+                or_(assignment.all_branches.is_(True), assignment.branch_id == Job.branch_id),
+                or_(
+                    assignment.all_directions.is_(True),
+                    assignment.direction == Job.direction,
+                ),
+                or_(assignment.all_modes.is_(True), assignment.mode == Job.mode),
+            )
+            .correlate(Job)
+        )
 
     def authorize_admin(
         self,

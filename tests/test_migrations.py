@@ -30,6 +30,8 @@ def test_initial_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
         "job_delegations",
         "exceptional_transition_requests",
         "audit_events",
+        "job_versions",
+        "user_availability_events",
     }
     assert expected_tables.issubset(set(inspector.get_table_names()))
     assert {

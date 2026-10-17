@@ -262,6 +262,10 @@ def test_absence_bulk_delegation_expires_and_restores_original_queue(session: Se
     assert WorkQueueService(session).count(actor=maker, now=during) == 0
     replacement_items = WorkQueueService(session).list(actor=replacement, now=during)
     assert [item.job_id for item in replacement_items] == [job.id]
+    assert replacement_items[0].is_delegated is True
+    assert replacement_items[0].branch_id == job.branch_id
+    assert replacement_items[0].direction is job.direction
+    assert replacement_items[0].mode is job.mode
     after = NOW + timedelta(hours=4)
     assert WorkQueueService(session).count(actor=replacement, now=after) == 0
     assert WorkQueueService(session).count(actor=maker, now=after) == 1
@@ -424,6 +428,7 @@ def test_work_queue_count_list_busy_and_revocation_are_consistent(session: Sessi
     queue = WorkQueueService(session)
     maker.availability = EmployeeAvailability.BUSY
     assert queue.count(actor=maker, now=NOW) == len(queue.list(actor=maker, now=NOW)) == 1
+    assert queue.list(actor=maker, now=NOW)[0].is_delegated is False
     grant.revoked_at = NOW + timedelta(minutes=1)
     session.flush()
     assert queue.count(actor=maker, now=NOW + timedelta(minutes=1)) == 0

@@ -112,7 +112,9 @@ class JobResponse(BaseModel):
     id: str
     reference: str
     client_id: str
+    client_name: str
     branch_id: str
+    branch_name: str
     direction: JobDirection
     mode: JobMode
     stage: JobStage
@@ -134,7 +136,15 @@ class JobResponse(BaseModel):
 
     @classmethod
     def from_job(cls, job: Job) -> JobResponse:
-        return cls.model_validate(job, from_attributes=True)
+        return cls(
+            **{
+                field: getattr(job, field)
+                for field in cls.model_fields
+                if field not in {"client_name", "branch_name"}
+            },
+            client_name=job.client.name,
+            branch_name=job.branch.name,
+        )
 
 
 class ClientJobDetailResponse(BaseModel):
@@ -160,6 +170,14 @@ class ResponsibilityResponse(BaseModel):
     user_id: str | None
     assigned_at: datetime
     version: int
+
+
+class JobResponsibilityDetailResponse(BaseModel):
+    responsibility: ResponsibilityType
+    user_id: str | None
+    display_name: str | None
+    current_actor_responsible: bool
+    via_delegation: bool
 
 
 class DelegationResponse(BaseModel):

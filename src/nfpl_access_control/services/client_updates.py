@@ -11,7 +11,16 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from nfpl_access_control.authorization import AuthorizationDecision, AuthorizationEngine
-from nfpl_access_control.models import Job, JobStage, JobVersion, Permission, User, UserKind
+from nfpl_access_control.models import (
+    Job,
+    JobDirection,
+    JobMode,
+    JobStage,
+    JobVersion,
+    Permission,
+    User,
+    UserKind,
+)
 
 SAFE_ACTIONS = {
     "job.created": "Shipment created",
@@ -76,6 +85,24 @@ class ClientUpdatePage:
     next_cursor: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class ClientShipmentSummary:
+    job_id: str
+    reference: str
+    direction: JobDirection
+    mode: JobMode
+    stage: JobStage
+    progress_percent: int
+    updated_at: datetime
+    version: int
+
+
+@dataclass(frozen=True, slots=True)
+class ClientShipmentPage:
+    items: tuple[ClientShipmentSummary, ...]
+    next_cursor: str | None
+
+
 class ClientUpdateService:
     def __init__(self, session: Session):
         self.session = session
@@ -97,6 +124,46 @@ class ClientUpdateService:
             updated_at=job.updated_at,
             version=job.version,
         )
+
+    def jobs(
+        self,
+        *,
+        actor: User,
+        cursor: str | None = None,
+        limit: int = 50,
+        at: datetime | None = None,
+    ) -> ClientShipmentPage:
+        current_time = at or datetime.now(UTC)
+        self._require_client_actor(actor)
+        if not 1 <= limit <= 100:
+            raise ClientCursorError("Shipment limit must be between 1 and 100.")
+        after_id = self._decode_job_cursor(cursor) if cursor else None
+        statement = select(Job).where(
+            AuthorizationEngine.job_scope_predicate(actor, Permission.JOB_VIEW, at=current_time),
+            AuthorizationEngine.job_scope_predicate(
+                actor, Permission.CLIENT_HISTORY_VIEW, at=current_time
+            ),
+        )
+        if after_id is not None:
+            statement = statement.where(Job.id > after_id)
+        rows = list(self.session.scalars(statement.order_by(Job.id).limit(limit + 1)))
+        has_more = len(rows) > limit
+        visible = rows[:limit]
+        items = tuple(
+            ClientShipmentSummary(
+                job_id=job.id,
+                reference=job.reference,
+                direction=job.direction,
+                mode=job.mode,
+                stage=job.stage,
+                progress_percent=PROGRESS[job.stage],
+                updated_at=job.updated_at,
+                version=job.version,
+            )
+            for job in visible
+        )
+        next_cursor = self._encode_job_cursor(visible[-1].id) if has_more and visible else None
+        return ClientShipmentPage(items=items, next_cursor=next_cursor)
 
     def history(
         self,
@@ -211,3 +278,18 @@ class ClientUpdateService:
             return occurred_at, version_id
         except (binascii.Error, ValueError, UnicodeDecodeError) as error:
             raise ClientCursorError("The update cursor is invalid.") from error
+
+    @staticmethod
+    def _encode_job_cursor(job_id: str) -> str:
+        return base64.urlsafe_b64encode(job_id.encode()).decode().rstrip("=")
+
+    @staticmethod
+    def _decode_job_cursor(value: str) -> str:
+        try:
+            padded = value + "=" * (-len(value) % 4)
+            job_id = base64.urlsafe_b64decode(padded).decode()
+            if not job_id:
+                raise ValueError
+            return job_id
+        except (binascii.Error, ValueError, UnicodeDecodeError) as error:
+            raise ClientCursorError("The shipment cursor is invalid.") from error

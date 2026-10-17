@@ -9,6 +9,8 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from nfpl_access_control.models import (
     AbsenceJobOutcome,
     AbsenceNominationStatus,
+    JobDirection,
+    JobMode,
     JobStage,
     ResponsibilityType,
 )
@@ -91,6 +93,10 @@ class WorkQueueResponse(BaseModel):
     reference: str
     client_id: str
     client_name: str
+    branch_id: str
+    branch_name: str
+    direction: JobDirection
+    mode: JobMode
     stage: JobStage
     responsibility: ResponsibilityType
     next_action: str
@@ -98,6 +104,7 @@ class WorkQueueResponse(BaseModel):
     assigned_at: datetime
     priority: int
     version: int
+    is_delegated: bool
 
 
 class WorkQueuePage(BaseModel):

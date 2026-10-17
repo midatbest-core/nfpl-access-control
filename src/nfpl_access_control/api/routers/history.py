@@ -10,6 +10,7 @@ from nfpl_access_control.authorization import AuthorizationEngine, Scope
 from nfpl_access_control.models import AuditEvent, Job, Permission
 from nfpl_access_control.schemas.history import (
     AuditEventResponse,
+    ClientShipmentPageResponse,
     ClientStatusResponse,
     ClientUpdatePageResponse,
     ClientUpdateResponse,
@@ -232,6 +233,22 @@ def client_status(
         updated_at=item.updated_at,
         version=item.version,
     )
+
+
+@router.get("/client/jobs", response_model=ClientShipmentPageResponse)
+def client_jobs(
+    actor: CurrentActor,
+    session: DatabaseSession,
+    cursor: str | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+) -> ClientShipmentPageResponse:
+    try:
+        page = ClientUpdateService(session).jobs(actor=actor, cursor=cursor, limit=limit)
+    except ClientAccessError as error:
+        raise HTTPException(status_code=403, detail="Client Viewer access required") from error
+    except ClientCursorError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return ClientShipmentPageResponse.from_page(page)
 
 
 @router.get(

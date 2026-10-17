@@ -1,6 +1,9 @@
 """Authenticated shipment workflow endpoints."""
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -11,6 +14,7 @@ from nfpl_access_control.models import (
     Job,
     JobDelegation,
     JobEditRequest,
+    JobResponsibility,
     Permission,
     User,
     UserKind,
@@ -30,6 +34,7 @@ from nfpl_access_control.schemas.workflow import (
     FilingReturnRequest,
     JobCreateRequest,
     JobResponse,
+    JobResponsibilityDetailResponse,
     JobUpdateRequest,
     PrepareRequest,
     ReasonedVersionRequest,
@@ -105,6 +110,50 @@ def get_job(
     if actor.kind is UserKind.CLIENT:
         return ClientJobDetailResponse.from_job(job)
     return JobResponse.from_job(job)
+
+
+@router.get(
+    "/jobs/{job_id}/responsibilities",
+    response_model=list[JobResponsibilityDetailResponse],
+)
+def get_job_responsibilities(
+    job_id: str,
+    actor: CurrentActor,
+    session: DatabaseSession,
+) -> list[JobResponsibilityDetailResponse]:
+    job = _job_or_hidden(session, actor, job_id)
+    if actor.kind is not UserKind.STAFF:
+        raise HTTPException(status_code=404, detail="Job not found or not visible")
+    current_time = datetime.now(UTC)
+    delegated = set(
+        session.scalars(
+            select(JobDelegation.responsibility).where(
+                JobDelegation.job_id == job.id,
+                JobDelegation.delegate_user_id == actor.id,
+                JobDelegation.valid_from <= current_time,
+                JobDelegation.valid_until > current_time,
+                or_(JobDelegation.revoked_at.is_(None), JobDelegation.revoked_at > current_time),
+            )
+        )
+    )
+    rows = session.execute(
+        select(JobResponsibility, User)
+        .outerjoin(User, User.id == JobResponsibility.user_id)
+        .where(JobResponsibility.job_id == job.id)
+        .order_by(JobResponsibility.responsibility)
+    )
+    return [
+        JobResponsibilityDetailResponse(
+            responsibility=record.responsibility,
+            user_id=record.user_id,
+            display_name=employee.display_name if employee is not None else None,
+            current_actor_responsible=(
+                record.user_id == actor.id or record.responsibility in delegated
+            ),
+            via_delegation=record.responsibility in delegated,
+        )
+        for record, employee in rows
+    ]
 
 
 @router.patch("/jobs/{job_id}", response_model=JobResponse)

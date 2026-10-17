@@ -6,6 +6,9 @@ import type {
   RegistrationRequest,
   RegistrationResponse,
   AdminJob, AuditEvent, DashboardOverview, EmployeePage, Job, Suggestion, UrgentRequest, ReferenceData,
+  EditRequest, JobCreate, JobResponsibilityDetail, Notification, WorkQueuePage,
+  ChecklistItem, ClientJobDetail, ClientShipmentPage, ClientShipmentStatus,
+  ClientUpdate, ClientUpdatePage, FilingReturnCategory, OperationalHistoryItem,
 } from './contracts'
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
@@ -99,7 +102,7 @@ export const api = {
   referenceData: (token: string) => request<ReferenceData>('/v1/admin/reference-data', {}, token),
   adminJobs: (token: string, search = '', offset = 0) => request<AdminJob[]>(`/v1/admin/jobs?search=${encodeURIComponent(search)}&offset=${offset}&limit=25`, {}, token),
   job: (token: string, id: string) => request<Job>(`/v1/jobs/${id}`, {}, token),
-  createJob: (token: string, payload: Omit<Job, 'id' | 'stage' | 'version'>) => request<Job>('/v1/jobs', { method: 'POST', body: JSON.stringify(payload) }, token),
+  createJob: (token: string, payload: JobCreate) => request<Job>('/v1/jobs', { method: 'POST', body: JSON.stringify(payload) }, token),
   archiveJob: (token: string, id: string, expected_version: number, reason: string) => request<AdminJob>(`/v1/admin/jobs/${id}/archive`, { method: 'POST', body: JSON.stringify({ expected_version, reason }) }, token),
   cancelJob: (token: string, id: string, expected_version: number, reason: string) => request<Job>(`/v1/jobs/${id}/cancel`, { method: 'POST', body: JSON.stringify({ expected_version, reason }) }, token),
   suggestions: (token: string, id: string) => request<Record<string, Suggestion[]>>(`/v1/admin/jobs/${id}/assignment-suggestions`, {}, token),
@@ -113,4 +116,51 @@ export const api = {
   exceptionRequest: (token: string, id: string, action: 'cancel' | 'reopen', reason: string) => request(`/v1/admin/jobs/${id}/exception-requests`, { method: 'POST', body: JSON.stringify({ action, reason }) }, token),
   grantRole: (token: string, payload: unknown) => request('/v1/admin/role-assignments', { method: 'POST', body: JSON.stringify(payload) }, token),
   revokeRole: (token: string, id: string, reason: string) => request(`/v1/admin/role-assignments/${id}/revoke`, { method: 'POST', body: JSON.stringify({ reason }) }, token),
+  myWork: (token: string, cursor?: string, limit = 20) => {
+    const query = new URLSearchParams({ limit: String(limit) })
+    if (cursor) query.set('cursor', cursor)
+    return request<WorkQueuePage>(`/v1/my-work?${query}`, {}, token)
+  },
+  jobResponsibilities: (token: string, id: string) => request<JobResponsibilityDetail[]>(`/v1/jobs/${id}/responsibilities`, {}, token),
+  updateJob: (token: string, id: string, payload: { expected_version: number; goods_description: string; container_reference: string | null }) => request<Job>(`/v1/jobs/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }, token),
+  prepareJob: (token: string, id: string, expected_version: number, justification: string) => request<Job>(`/v1/jobs/${id}/prepare`, { method: 'POST', body: JSON.stringify({ expected_version, checklist_data: null, justification }) }, token),
+  requestJobEdit: (token: string, id: string, reason: string) => request<EditRequest>(`/v1/jobs/${id}/edit-requests`, { method: 'POST', body: JSON.stringify({ reason }) }, token),
+  notifications: (token: string, before?: string) => {
+    const query = new URLSearchParams({ limit: '25' })
+    if (before) query.set('before', before)
+    return request<Notification[]>(`/v1/notifications?${query}`, {}, token)
+  },
+  unreadNotificationCount: (token: string) => request<{ count: number }>('/v1/notifications/unread-count', {}, token),
+  markNotificationRead: (token: string, id: string) => request<Notification>(`/v1/notifications/${id}/read`, { method: 'POST' }, token),
+  checkJob: (token: string, id: string, payload: {
+    expected_version: number
+    approved: boolean
+    reason: string
+    checklist_items: Array<{
+      key: string
+      status: NonNullable<ChecklistItem['status']>
+      justification: string | null
+    }>
+    justification: string
+  }) => request<Job>(`/v1/jobs/${id}/check`, { method: 'POST', body: JSON.stringify(payload) }, token),
+  fileJob: (token: string, id: string, expected_version: number) => request<Job>(`/v1/jobs/${id}/file`, { method: 'POST', body: JSON.stringify({ expected_version }) }, token),
+  returnForCorrection: (token: string, id: string, expected_version: number, category: FilingReturnCategory, reason: string) => request<Job>(`/v1/jobs/${id}/return-for-correction`, { method: 'POST', body: JSON.stringify({ expected_version, category, reason }) }, token),
+  operationalHistory: (token: string, id: string) => request<OperationalHistoryItem[]>(`/v1/jobs/${id}/operational-history?limit=25`, {}, token),
+  clientJobs: (token: string, cursor?: string, limit = 25) => {
+    const query = new URLSearchParams({ limit: String(limit) })
+    if (cursor) query.set('cursor', cursor)
+    return request<ClientShipmentPage>(`/v1/client/jobs?${query}`, {}, token)
+  },
+  clientJob: (token: string, id: string) => request<ClientJobDetail>(`/v1/jobs/${id}`, {}, token),
+  clientStatus: (token: string, id: string) => request<ClientShipmentStatus>(`/v1/client/jobs/${id}/status`, {}, token),
+  clientHistory: (token: string, id: string, beforeVersion?: number) => {
+    const query = new URLSearchParams({ limit: '25' })
+    if (beforeVersion) query.set('before_version', String(beforeVersion))
+    return request<ClientUpdate[]>(`/v1/client/jobs/${id}/history?${query}`, {}, token)
+  },
+  clientUpdates: (token: string, cursor?: string, limit = 25) => {
+    const query = new URLSearchParams({ limit: String(limit) })
+    if (cursor) query.set('cursor', cursor)
+    return request<ClientUpdatePage>(`/v1/client/updates?${query}`, {}, token)
+  },
 }

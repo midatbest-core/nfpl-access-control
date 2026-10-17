@@ -109,9 +109,15 @@ describe('authentication screens', () => {
 
   it('logs out through the backend and clears local authentication state', async () => {
     storedSession()
-    const fetchMock = vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(jsonResponse(profile(['maker'])))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/v1/identity/me')) return jsonResponse(profile(['maker']))
+      if (url.includes('/v1/my-work?')) {
+        return jsonResponse({ items: [], count: 0, limit: 20, next_cursor: null })
+      }
+      if (url.endsWith('/v1/auth/logout')) return new Response(null, { status: 204 })
+      throw new Error(`Unexpected request: ${url}`)
+    })
     window.history.replaceState({}, '', '/work')
     render(<App />)
 
@@ -149,9 +155,16 @@ describe('protected and role-aware routes', () => {
 
   it('shows all relevant navigation for overlapping effective roles', async () => {
     storedSession()
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-      jsonResponse(profile(['maker', 'checker', 'filing-officer'])),
-    )
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/v1/identity/me')) {
+        return jsonResponse(profile(['maker', 'checker', 'filing-officer']))
+      }
+      if (url.includes('/v1/my-work?')) {
+        return jsonResponse({ items: [], count: 0, limit: 20, next_cursor: null })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
     window.history.replaceState({}, '', '/work')
     render(<App />)
 

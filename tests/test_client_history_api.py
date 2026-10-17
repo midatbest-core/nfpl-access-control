@@ -116,6 +116,19 @@ def test_client_status_history_and_cursor_feed_are_isolated_and_sanitized(
     status = api_client.get(f"/v1/client/jobs/{visible.id}/status", headers=headers)
     assert status.status_code == 200
     assert status.json()["reference"] == "CLIENT-VISIBLE"
+    shipments = api_client.get("/v1/client/jobs", headers=headers)
+    assert shipments.status_code == 200
+    assert [item["job_id"] for item in shipments.json()["items"]] == [visible.id]
+    assert set(shipments.json()["items"][0]) == {
+        "job_id",
+        "reference",
+        "direction",
+        "mode",
+        "stage",
+        "progress_percent",
+        "updated_at",
+        "version",
+    }
     assert api_client.get(f"/v1/client/jobs/{hidden.id}/status", headers=headers).status_code == 404
     detail = api_client.get(f"/v1/jobs/{visible.id}", headers=headers)
     assert detail.status_code == 200
@@ -171,3 +184,20 @@ def test_client_status_history_and_cursor_feed_are_isolated_and_sanitized(
         api_client.get("/v1/client/updates", headers=headers, params={"cursor": "%%%"}).status_code
         == 422
     )
+    assert (
+        api_client.get("/v1/client/jobs", headers=headers, params={"cursor": "%%%"}).status_code
+        == 422
+    )
+
+
+def test_client_shipment_directory_denies_staff_identity(
+    api_client: TestClient,
+    active_user: User,
+) -> None:
+    assert active_user.kind is UserKind.STAFF
+    response = api_client.get(
+        "/v1/client/jobs",
+        headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+    )
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Client Viewer access required"}

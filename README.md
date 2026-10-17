@@ -1,8 +1,8 @@
 # NFPL Access Control Service
 
 Security-focused authorization for NFPL customs-brokerage shipment jobs. This
-repository currently implements **Phases 1 through 4, Phases 5A-5C, and Phases
-6A-6B**: the project skeleton,
+repository currently implements **Phases 1 through 4, Phases 5A-5C, the
+complete Phase 6 frontend, and Phase 7 deterministic demo/load data**: the project skeleton,
 database and authentication foundation, deployment configuration, scoped RBAC,
 central authorization explanations, Admin-controlled grants/revocations, and
 configurable safe roles, plus transactional shipment workflow, responsibility,
@@ -24,6 +24,15 @@ Phase 6B connects the Admin overview, shipment directory/details and creation,
 assignment suggestions, employee lifecycle and scoped role management, urgent
 requests, archival, exceptional transitions, and audit viewer to the secured
 backend APIs.
+Phase 6C-A connects operational employees to the real keyset-paginated My Work
+queue, an authorized shared shipment detail, Maker editing/submission/correction
+and edit-request actions, and the request-driven notification center.
+The completed Phase 6 adds Checker-owned generated checklist decisions,
+Filing Officer review/file/return actions, and Client Viewer shipment tracking
+with sanitized status, history, and incremental updates.
+Phase 7 adds a deterministic schema-checked demo generator, guarded atomic
+SQLite importer, secure demo login provisioning, reproducible large-data
+generation, and real-HTTP role/isolation verification.
 
 The original `NFPL_Access_Control_Assignment.pdf` is retained as the source
 brief. The approved expanded requirements govern the phased implementation.
@@ -117,6 +126,86 @@ exist, creates one globally scoped Admin atomically, records account/grant/audit
 history, and cannot overwrite an existing email or branch. Later Admin grants
 remain blocked until the independent sensitive-access approval flow is added.
 
+## Phase 7 Demo Data
+
+Create a new disposable demo database with migrations plus the standard
+dataset in one command. The target must be file-backed SQLite, must not be the
+default nfpl.db, and must contain no application data. The importer validates
+the Alembic head and system roles, inserts all rows atomically, runs SQLite
+foreign-key verification, and refuses a second import.
+
+~~~powershell
+$demoSecret = Read-Host "Disposable demo password" -AsSecureString
+$env:NFPL_DEMO_PASSWORD = [Net.NetworkCredential]::new("", $demoSecret).Password
+.venv\Scripts\nfpl-sample-data seed-demo --database-url sqlite:///./nfpl-demo.db --confirm-disposable
+Remove-Item Env:NFPL_DEMO_PASSWORD
+~~~
+
+NFPL_DEMO_PASSWORD is used only by this explicit offline command. It must be
+12-128 characters and is never stored or printed: each non-service demo
+identity receives its own uniquely salted scrypt hash. The Parser Service does
+not receive a password. Do not use the demo database or a shared demo password
+in production.
+
+The standard dataset contains exactly 5 branches, 10 clients, 20 operational
+employees plus the bootstrap Admin, 10 client-viewer identities, one parser
+service, and 420 jobs. It includes all workflow stages, complete immutable
+versions, audits, scoped/current/expired/revoked/future grants, responsibility
+history, Busy/Absent/Disabled states, absence decisions, valid delegations,
+correction requests, exceptional transitions, archived jobs, and audited
+notifications.
+
+Seeded staff identities and effective/demo edge scopes:
+
+| Login | Person | Availability/account | Role and scope |
+| --- | --- | --- | --- |
+| admin@nfpl.test | Nadia Admin | Available/Active | Global Admin bootstrap identity |
+| emp-00@nfpl.test | Aarav Shah | Available/Active, effective approved absence | Global Maker; Checker for CL001; overlapping CL001 and BR01 Maker grants |
+| emp-01@nfpl.test | Diya Nair | Available/Active | Checker only for CL001 + BR01 + Import; Filing Officer for BR02 |
+| emp-02@nfpl.test | Kabir Rao | Available/Active | Global Filing Officer |
+| emp-03@nfpl.test | Isha Menon | Available/Active | Global Checker; time-limited global Maker |
+| emp-04@nfpl.test | Vivaan Gupta | Busy/Active | BR05 Checker |
+| emp-05@nfpl.test | Anaya Iyer | Available/Active | BR01 Filing Officer; Import/Air Checker; expired global Checker edge grant |
+| emp-06@nfpl.test | Reyansh Khan | Available/Active | BR02 Maker and Checker; revoked global Filing Officer edge grant |
+| emp-07@nfpl.test | Myra Patel | Absent/Active | BR03 Checker; cannot act or receive new work while absent |
+| emp-08@nfpl.test | Arjun Das | Available/Active | BR04 Filing Officer |
+| emp-09@nfpl.test | Sara Reddy | Available/Active | BR05 Maker; not-yet-effective global Maker edge grant |
+| emp-10@nfpl.test | Vihaan Bose | Available/Active | Global Checker plus overlapping BR01 Checker grant |
+| emp-11@nfpl.test | Kiara Joshi | Busy/Active | BR02 Filing Officer |
+| emp-12@nfpl.test | Advait Verma | Available/Active | BR03 Maker |
+| emp-13@nfpl.test | Zara Pillai | Available/Active | BR04 Checker |
+| emp-14@nfpl.test | Rohan Sinha | Available/Active | BR05 Filing Officer |
+| emp-15@nfpl.test | Nisha Kaur | Absent/Active | BR01 Maker; cannot act or receive new work while absent |
+| emp-16@nfpl.test | Dev Mehta | Available/Active | BR02 Checker |
+| emp-17@nfpl.test | Tara Ghosh | Available/Active | BR03 Filing Officer |
+| emp-18@nfpl.test | Krish Banerjee | Available/Disabled | No active grant; login and protected access denied |
+| emp-19@nfpl.test | Aisha Roy | Available/Active | BR05 Checker and independently granted global Admin |
+
+client-viewer-00@portal.test through client-viewer-09@portal.test are
+restricted one-to-one to CL001 through CL010. parser-service@nfpl.test has
+only the built-in Parser Service role and no interactive password.
+
+Flat deterministic JSON/CSV output is optional:
+
+~~~powershell
+.venv\Scripts\nfpl-sample-data standard --out .\sample-data\standard --format json
+~~~
+
+The marked output directory is safe to regenerate; an unrelated non-empty
+directory is refused unless explicitly forced. IDs, timestamps, table files,
+and the manifest are byte-deterministic.
+
+Generate the large performance dataset separately; this does not connect to or
+load the regular demo database:
+
+~~~powershell
+.venv\Scripts\nfpl-sample-data benchmark --out .\sample-data\benchmark --format ndjson
+~~~
+
+Defaults are 500 operational employees plus one benchmark Admin, 200,000 jobs,
+600,000 responsibilities, and 200,000 versions. Rows stream to disk so the
+generator does not materialize the full dataset in memory.
+
 The available endpoints are:
 
 - `GET /health`: lightweight, unauthenticated process liveness check.
@@ -145,6 +234,9 @@ The available endpoints are:
   shipment using the authenticated actor and scoped policy. Client Viewer GETs
   use a separate safe response that omits descriptions, checklist decisions,
   employee identities, return feedback, and correction justifications.
+- `GET /v1/jobs/{id}/responsibilities`: visible staff-only responsibility
+  names plus direct/delegated context for the signed-in employee. Hidden jobs
+  and client identities receive the same non-disclosing 404 response.
 - `POST /v1/jobs/{id}/prepare|check|file|cancel`: guarded, versioned workflow
   actions. Maker-supplied `checklist_data` is retained only for request
   compatibility and is ignored; the server generates the Checker checklist.
@@ -170,8 +262,9 @@ The available endpoints are:
   actually changed the recorded version.
 - `GET /v1/jobs/{id}/operational-history`: bounded operational history for a
   scoped Filing Officer or Admin. It omits snapshots and authorization context.
-- `GET /v1/client/jobs/{id}/status|history` and `GET /v1/client/updates`:
-  client-scoped, sanitized, read-only status and cursor-based updates.
+- `GET /v1/client/jobs`, `GET /v1/client/jobs/{id}/status|history`, and
+  `GET /v1/client/updates`: client-scoped, sanitized, read-only shipment
+  directory, status, history, and cursor-based updates.
 - `POST/GET /v1/absence-nominations`: employees nominate a temporary
   replacement and review their own requests. Global Admin decision/revocation
   endpoints activate or end eligible job delegations; per-job override handles
@@ -240,12 +333,14 @@ Run the disposable real-HTTP Admin smoke workflow with:
 
 ~~~powershell
 .venv\Scripts\python scripts\phase6b_http_smoke.py
+.venv\Scripts\python scripts\phase6ca_http_smoke.py
+.venv\Scripts\python scripts\phase6_http_smoke.py
 ~~~
 
 The command migrates a temporary SQLite database, starts a hidden local Uvicorn
-process, bootstraps temporary test identities, exercises the Admin HTTP APIs,
-then stops the process and removes the database. It does not use local
-development or production data.
+process, bootstraps temporary test identities, exercises the Admin, Maker,
+Checker, Filing Officer, and Client Viewer HTTP APIs, then stops the process
+and removes the database. It does not use local development or production data.
 
 ## Zero-Cost Demonstration Deployment
 
@@ -477,10 +572,8 @@ external tamper-evident archive remain possible defense-in-depth work.
 ## Current Limitations
 
 The current backend intentionally does **not** include general permission requests or
-independent Admin-role grant approval, deterministic seed/load generation,
-benchmarks, or the final design document/demo. Maker, Checker, Filing Officer,
-Client Viewer, notifications, and My Work frontend screens remain placeholders
-for later approved frontend phases. Notifications
+independent Admin-role grant approval beyond the trusted bootstrap and
+workflow-specific independent approvals, or the final design document. Notifications
 are in-app and request-driven only; email, push delivery, and a background
 dispatcher are outside the frozen scope. Audit events and notifications remain
 distinct: each created notification is audited, but most audit events do not
@@ -491,12 +584,14 @@ transfer responsibilities across multiple clients and branches. A concurrent
 override is serialized with row locks on PostgreSQL and optimistic nomination
 versions; SQLite retains its single-writer development semantics. The Admin
 All Jobs search uses bounded offset pagination, while the action-sensitive My
-Work queue uses keyset pagination. Scale latency remains unmeasured until the
-approved benchmark phase.
+Work queue uses keyset pagination. Phase 7 measured file generation at the
+full requested scale, but database authorization, queue, count, list, and
+historical-query latency against 200,000 imported jobs remains unmeasured.
 
 SQLite is for local development, not Render/Railway persistence. PostgreSQL has
-not yet been exercised by this local test run. No latency or scale claim is made
-until the approved benchmark phase is executed. Frontend component tests use
-mocked `fetch`; Phase 6B additionally verified Admin APIs over real HTTP against
-a temporary Uvicorn/SQLite instance. Browser automation, accessibility audit,
-and a Vercel deployment were not performed.
+not yet been exercised by this local test run. Frontend component tests use
+mocked `fetch`; Phase 6 additionally verified Admin, Maker, Checker, Filing
+Officer, and Client Viewer APIs over real HTTP against temporary
+Uvicorn/SQLite instances. The smoke harnesses create no persistent fixture
+data. Browser automation, accessibility audit, and a Vercel deployment were
+not performed.

@@ -1,7 +1,7 @@
 # NFPL Access Control Service - Test Report
 
 Report date: 2026-10-17  
-Scope: Phases 1 through 4, Phases 5A-5C, Phases 6A-6B, and zero-cost deployment amendment
+Scope: Phases 1 through 7 and the zero-cost deployment amendment
 
 ## Environment
 
@@ -20,7 +20,91 @@ Dependencies were installed from `pyproject.toml` into the repository-local
 `.venv`. The Windows Store `python` alias was unusable, so setup used the
 installed Python 3.12 interpreter directly.
 
-## Final Verification
+## Phase 7 Final Verification
+
+Commands actually executed:
+
+~~~powershell
+.venv\Scripts\python.exe -m pytest --cov=nfpl_access_control --cov-report=term-missing
+.venv\Scripts\python.exe -m ruff check .
+.venv\Scripts\python.exe -m ruff format --check .
+cd frontend
+npm run typecheck
+npm run lint
+npm test -- --run
+npm run build
+cd ..
+.venv\Scripts\python.exe scripts\phase7_http_smoke.py
+.venv\Scripts\python.exe -m alembic upgrade head
+.venv\Scripts\python.exe -m alembic current
+.venv\Scripts\python.exe -m alembic check
+.venv\Scripts\python.exe -m alembic downgrade base
+.venv\Scripts\python.exe -m alembic upgrade head
+~~~
+
+Verified results:
+
+- Backend Pytest: **127 passed, 0 failed, 0 skipped**; one third-party
+  Starlette/httpx deprecation warning.
+- Statement coverage: **85%** (4,558 statements, 691 missed).
+- Phase 7 focused tests: **12 passed**. They cover exact dataset counts,
+  deterministic build/files, live-schema column parity, scoped-responsibility
+  eligibility, absence/delegation semantics, audited notifications,
+  output-directory safety, large-data stream counts, atomic import,
+  foreign-key integrity, rerun refusal, unique scrypt hashes, role-specific
+  API access, no-self-check, client isolation, historical eligibility, and
+  authoritative system roles.
+- Ruff lint and format: pass across the repository.
+- Frontend: TypeScript pass; ESLint pass; **33 Vitest tests passed** across
+  five files; production build pass (42 modules, 338.10 kB JS/99.93 kB gzip,
+  35.69 kB CSS/6.88 kB gzip).
+- Migration verification on a unique temporary SQLite file: upgrade to
+  20261017_0007, current-head check, no schema drift, full downgrade to base,
+  and re-upgrade to head all passed. Phase 7 adds no migration.
+- Standard import: a fresh migrated SQLite database accepted 5,803 generated
+  rows plus 31 unique password-credential rows and one bootstrap marker
+  (5,835 total inserted rows). SQLite PRAGMA foreign_key_check returned no
+  violations. A repeat import was rejected without changing counts.
+- Real HTTP/Uvicorn smoke: health and Admin login passed; Admin dashboard
+  reported 378 non-archived jobs from 420 total; Maker update, Checker
+  verification, and Filing Officer filing passed; an adversarial Checker
+  delegation to the actual preparer was denied with self_check_forbidden;
+  Client Viewer own-client status passed and cross-client status returned 404.
+  This was API-only verification, not browser automation.
+- Full benchmark file generation: **1,002,212 rows** across seven data tables
+  generated as NDJSON in **42.617 seconds**, totaling **629,221,039 bytes**,
+  on this Windows/Python 3.12.10 environment. Counts were 501 identities
+  (500 operational employees plus one Admin), 1,501 scoped role assignments,
+  200,000 jobs, 600,000 responsibilities, and 200,000 versions. Output was
+  generated in a marked temporary directory, verified, and removed; it was
+  not imported into the regular demo database. These are generation figures,
+  not API or database latency claims.
+
+Phase 7 corrected incompatibilities found in the supplied generator before
+import: role_slug was not a live role_assignments column; role-assignment
+timestamps were absent; version snapshots lacked historical scope fields;
+responsibilities were not consistently backed by role scope; absence cases
+did not correspond to actual responsibility holders; exceptional decisions
+self-approved; notification events lacked audit counterparts; the manifest
+used a nondeterministic wall clock; and benchmark responsibilities did not
+match grants. Corrections preserve the live schema and security invariants.
+
+Remaining risks and limitations:
+
+- PostgreSQL/Neon import and query performance were not exercised; migration
+  and import verification used SQLite.
+- The full 200,000-job files were generated but deliberately not imported, so
+  authorization, queue, count, listing, and historical-query database latency
+  at that scale remains unmeasured.
+- Append-only protection remains application-level and can be bypassed by a
+  database owner, as documented.
+- Browser automation, accessibility audit, and deployed Render/Vercel/Neon
+  verification were not performed.
+- The shared demo password is suitable only for disposable local data. It is
+  supplied out-of-band through NFPL_DEMO_PASSWORD, never committed or printed,
+  and the Parser Service intentionally has no password credential.
+
+## Previous Phase 6C-A Verification
 
 Commands executed:
 
@@ -42,6 +126,7 @@ npm run build
 npm audit --omit=dev
 cd ..
 .venv\Scripts\python scripts\phase6b_http_smoke.py
+.venv\Scripts\python scripts\phase6ca_http_smoke.py
 ~~~
 
 Additional Python assertions loaded the ASGI app, generated OpenAPI, checked
@@ -50,6 +135,9 @@ Phase 6B smoke script also started a real Uvicorn server on loopback with a
 disposable migrated SQLite database and used real HTTP requests. Earlier
 Phase 3 verification parsed `render.yaml` and checked its free-plan and health
 configuration.
+The Phase 6C-A smoke independently started the real Uvicorn application against
+a disposable migrated SQLite database and exercised Admin setup plus the Maker
+queue, detail, edit, submit, edit-request, and notification journey.
 
 Final results:
 
@@ -58,24 +146,29 @@ Final results:
 - Dependency consistency: pass, no broken requirements
 - Render YAML parse/config assertions: pass
 - Pytest: **114 passed, 0 failed, 0 skipped**, 1 third-party deprecation warning
-- Statement coverage: **85%** (3,766 statements, 576 missed)
-- Alembic upgrade and full downgrade: pass through a disposable
-  canonical `DATABASE_URL`
-- Alembic model/schema drift check: pass, no new upgrade operations detected
-- Import/OpenAPI smoke check: pass; 57 documented API paths
+- Statement coverage: **85%** (3,795 statements, 571 missed)
+- Alembic upgrade to head: pass through the Phase 6C-A disposable HTTP smoke.
+  Phase 6C-A changes no tables, columns, constraints, or indexes, so the prompt's
+  conditional full downgrade/schema-drift checks were not rerun. The preserved
+  Phase 6B baseline passed both, and no file under `alembic/` changed.
+- Import/OpenAPI smoke check: pass; 58 documented API paths
 - Benchmarks: **not run**; benchmark implementation is Phase 6
 - Frontend TypeScript: pass
 - Frontend ESLint: pass, 0 errors/warnings
-- Frontend Vitest: **19 passed, 0 failed, 0 skipped** across 3 files
-- Frontend production build: pass; 39 modules transformed
-- Frontend production bundle: 310.15 kB JavaScript (94.70 kB gzip) and
-  33.96 kB CSS (6.55 kB gzip)
+- Frontend Vitest: **26 passed, 0 failed, 0 skipped** across 4 files
+- Frontend production build: pass; 40 modules transformed
+- Frontend production bundle: 322.81 kB JavaScript (97.33 kB gzip) and
+  34.95 kB CSS (6.74 kB gzip)
 - Frontend runtime dependency audit: pass, 0 known vulnerabilities
 - Real HTTP Admin smoke: pass for health, login, reference data, dashboard,
   employee listing, scoped grant/revoke, job create/get, assignment
   suggestions, job audit, and urgent-request retrieval. The fixture contained
   no pending urgent request, so decision mutation was covered by mocked UI and
   backend service/API tests rather than this HTTP smoke.
+- Real HTTP Maker smoke: pass for health, employee login, My Work list/count,
+  named job detail, responsibility context, optimistic edit, submission lock,
+  post-submit queue removal, edit-request creation, notification listing/count,
+  and mark-read. This was API-level HTTP integration, not a browser run.
 - Browser automation: not run; no browser automation tool is installed.
 
 The warning comes from FastAPI's installed test-client compatibility layer:
@@ -347,6 +440,33 @@ should track it.
 - The disposable real-HTTP run exercised a running Uvicorn application rather
   than ASGI-only TestClient calls. It is not a browser UI test.
 
+## Phase 6C-A My Work and Maker Scenarios Verified
+
+- The operational landing route uses the real SQL-backed My Work response,
+  displays the server count, workflow metadata, direct/delegated context and
+  feedback, and preserves opaque keyset Next/Previous navigation.
+- The shared staff detail displays authorized client/branch names and assigned
+  operational employees. It deliberately exposes no complete audit/history
+  endpoint to Makers or Checkers.
+- Maker edits send the current optimistic version. Direction and mode are
+  read-only. Submission requires confirmation, refreshes the returned version,
+  locks editing, and removes the submitted item from the actionable queue.
+- Returned corrections display server feedback and require a correction
+  justification before resubmission. Locked Prepared/Checked work offers the
+  existing reasoned edit-request flow; Admin approval remains independent.
+- Notifications use only the signed-in actor's bounded list/count/read APIs.
+  Job links are navigation hints and re-enter protected job routes.
+- Seven targeted React tests cover queue count/metadata/keyset paging,
+  empty/revoked access, Maker edit/submission lock, correction justification,
+  post-submission edit requests, stale-version feedback, and notification
+  unread/read/navigation behavior. Existing authentication tests were updated
+  to model the newly active queue request rather than a placeholder route.
+- Backend regression assertions cover direct/delegated queue metadata and the
+  staff-only responsibility context response. The full backend suite remains
+  114 tests because these assertions extend existing test cases.
+- The disposable real-HTTP run exercised the actual Uvicorn application and
+  temporary migrated SQLite database. It did not exercise a browser.
+
 ## Failed Attempts and Corrections
 
 Results are recorded rather than hidden:
@@ -445,14 +565,22 @@ Results are recorded rather than hidden:
     the real creation clock, which had moved past the test's fixed historical
     timestamp. Giving synthetic users an explicit earlier creation timestamp
     made the test deterministic; the final 114-test run passed.
+26. The first Phase 6C-A full frontend run passed all 26 assertions, but Vitest
+    reported an asynchronous logout rejection because the newly active My Work
+    request consumed a sequential legacy mock. URL-specific queue/logout mocks
+    removed the race; the repeated run passed with no unhandled errors.
+27. The first Phase 6C-A HTTP smoke passed every API assertion, while the
+    combined command also reported import/line formatting in the new harness.
+    Ruff applied only mechanical formatting; repository-wide lint and format
+    checks then passed.
 
 ## Not Yet Verified
 
-The complete security matrix for original questions Q1-Q14 is not yet claimed.
-Permission requests and independent Admin-role grants, deterministic seed/load
-generation, and scale benchmarks belong to later approved phases. External
-notification delivery is outside Phase 5C; in-app notification retrieval is
-request-driven.
+General permission requests and independent approval for future Admin-role
+grants remain deferred. External notification delivery is outside the frozen
+scope; in-app notification retrieval is request-driven. Phase 7 now provides
+deterministic seed/load generation and measured full-scale file generation,
+but not a 200,000-job database performance benchmark.
 
 No live Render, Railway, Vercel, or Neon deployment was performed, and no real
 PostgreSQL server was available for integration testing. Current remaining risks
@@ -464,8 +592,8 @@ implemented. PostgreSQL row-lock behavior was designed but not exercised against
 a live PostgreSQL server; local concurrency coverage uses SQLite's single-writer
 behavior plus SQLAlchemy optimistic locking. The database-backed lockout is per known account rather than a
 distributed IP/device rate limiter; this avoids mandatory infrastructure but
-should be supplemented at the reverse proxy in production. No latency or scale
-figure has been measured or claimed. Phase 6B has a real loopback HTTP API
-smoke run but no browser automation, accessibility audit, or deployed Vercel
-smoke test. Operational employee/client frontend screens remain deferred beyond
-Phase 6B.
+should be supplemented at the reverse proxy in production. The measured
+42.617-second result applies only to NDJSON generation on the reported local
+environment and is not an API latency claim. Phase 7 has real loopback HTTP API
+verification but no browser automation, accessibility audit, or deployed
+Vercel smoke test.

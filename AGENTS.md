@@ -138,6 +138,34 @@ controls never replace backend scope, self-escalation, independent-approval, or
 optimistic-version enforcement. The disposable HTTP smoke script must use only
 a temporary database and must not claim browser coverage.
 
+Phase 6C-A operational pages use the SQL-backed My Work response as the source
+of actionable jobs and preserve its opaque keyset cursor. Maker controls require
+current backend responsibility context, send the server's optimistic version,
+and never expose full audit history. Shipment responses include authorized
+client and branch display names; direction and mode remain immutable. The
+notification center is request-driven and job links always re-enter protected
+routes. Its disposable HTTP smoke uses a migrated temporary database and does
+not claim browser coverage.
+
+Completed Phase 6 operational pages keep Checker and Filing actions in the
+shared authorized shipment detail. Checklist controls submit every
+server-generated key exactly once, require N/A and reevaluation explanations,
+and never calculate eligibility in place of backend checks. Filing returns use
+the approved Maker/Checker/Both categories and an optimistic job version.
+Client pages use only the sanitized client directory, status, history, update,
+and notification contracts; they never consume staff details or internal audit
+responses. All pagination cursors remain opaque to the browser.
+
+Phase 7 sample data is generated only by the explicit
+nfpl_access_control.sample_data CLI. Standard seeds target an empty,
+fully migrated, explicitly disposable SQLite file; they must never touch the
+default local database or run at application startup. Import is atomic,
+schema-checked, foreign-key checked, and refuses reruns into populated data.
+Demo passwords enter through NFPL_DEMO_PASSWORD, are stored only as unique
+scrypt encodings, are never printed, and are not issued to service identities.
+The 500-employee/200,000-job dataset is streamed to files and is never loaded
+into the regular demo database.
+
 ## Zero-Cost Deployment Constraints
 
 - Keep the backend as one lightweight FastAPI/Uvicorn web process. Do not add

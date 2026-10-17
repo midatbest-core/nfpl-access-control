@@ -103,7 +103,7 @@ export function AppShell() {
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
           </button>
           <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{activeLabel}</p><p className="hidden truncate text-xs text-slate-500 sm:block">Secure shipment access workspace</p></div>
-          <NotificationBell />
+          <NotificationBell onClick={() => navigate('/notifications')} />
           <div className="hidden h-8 w-px bg-slate-200 sm:block" />
           <div className="hidden min-w-0 items-center gap-3 sm:flex">
             <div className="grid h-9 w-9 place-items-center rounded-full bg-teal-50 text-sm font-bold text-teal-800">{user?.display_name.slice(0, 1).toUpperCase()}</div>

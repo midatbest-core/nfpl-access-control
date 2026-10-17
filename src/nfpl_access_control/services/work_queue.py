@@ -13,9 +13,12 @@ from sqlalchemy.orm import Session
 from nfpl_access_control.authorization import AuthorizationEngine
 from nfpl_access_control.models import (
     AccountStatus,
+    Branch,
     Client,
     Job,
     JobDelegation,
+    JobDirection,
+    JobMode,
     JobResponsibility,
     JobStage,
     Permission,
@@ -32,6 +35,10 @@ class WorkQueueItem:
     reference: str
     client_id: str
     client_name: str
+    branch_id: str
+    branch_name: str
+    direction: JobDirection
+    mode: JobMode
     stage: JobStage
     responsibility: ResponsibilityType
     next_action: str
@@ -39,6 +46,7 @@ class WorkQueueItem:
     assigned_at: datetime
     priority: int
     version: int
+    is_delegated: bool
 
 
 class WorkQueueService:
@@ -77,13 +85,18 @@ class WorkQueueService:
                 queue,
                 Job.reference,
                 Job.client_id,
+                Job.branch_id,
+                Job.direction,
+                Job.mode,
                 Job.stage,
                 Job.last_return_reason,
                 Job.version,
                 Client.name,
+                Branch.name.label("branch_name"),
             )
             .join(Job, Job.id == queue.c.job_id)
             .join(Client, Client.id == Job.client_id)
+            .join(Branch, Branch.id == Job.branch_id)
         )
         if cursor is not None:
             priority, assigned_at, job_id = self._decode_cursor(cursor)
@@ -112,6 +125,10 @@ class WorkQueueService:
                 reference=row.reference,
                 client_id=row.client_id,
                 client_name=row.name,
+                branch_id=row.branch_id,
+                branch_name=row.branch_name,
+                direction=row.direction,
+                mode=row.mode,
                 stage=row.stage,
                 responsibility=ResponsibilityType(row.responsibility),
                 next_action=row.next_action,
@@ -119,6 +136,7 @@ class WorkQueueService:
                 assigned_at=row.assigned_at,
                 priority=row.priority,
                 version=row.version,
+                is_delegated=row.is_delegated,
             )
             for row in rows[:limit]
         ]
@@ -224,6 +242,7 @@ class WorkQueueService:
                     case((Job.id.is_not(None), priority)).label("priority"),
                     case((Job.id.is_not(None), responsibility.value)).label("responsibility"),
                     case((Job.id.is_not(None), action)).label("next_action"),
+                    case((direct_time.is_(None), True), else_=False).label("is_delegated"),
                 ).where(
                     Job.archived_at.is_(None),
                     *stage_conditions,

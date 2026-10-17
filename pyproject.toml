@@ -19,6 +19,7 @@ dependencies = [
 
 [project.scripts]
 nfpl-bootstrap-admin = "nfpl_access_control.cli:main"
+nfpl-sample-data = "nfpl_access_control.sample_data.cli:main"
 
 [project.optional-dependencies]
 dev = [

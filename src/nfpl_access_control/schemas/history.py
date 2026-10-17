@@ -8,7 +8,9 @@ from pydantic import BaseModel
 
 from nfpl_access_control.models import JobStage, Permission
 from nfpl_access_control.services.client_updates import (
+    ClientShipmentPage,
     ClientShipmentStatus,
+    ClientShipmentSummary,
     ClientShipmentUpdate,
 )
 from nfpl_access_control.services.history import (
@@ -142,6 +144,42 @@ class ClientStatusResponse(BaseModel):
             progress_percent=item.progress_percent,
             updated_at=item.updated_at,
             version=item.version,
+        )
+
+
+class ClientShipmentSummaryResponse(BaseModel):
+    job_id: str
+    reference: str
+    direction: str
+    mode: str
+    stage: JobStage
+    progress_percent: int
+    updated_at: datetime
+    version: int
+
+    @classmethod
+    def from_summary(cls, item: ClientShipmentSummary) -> ClientShipmentSummaryResponse:
+        return cls(
+            job_id=item.job_id,
+            reference=item.reference,
+            direction=item.direction.value,
+            mode=item.mode.value,
+            stage=item.stage,
+            progress_percent=item.progress_percent,
+            updated_at=item.updated_at,
+            version=item.version,
+        )
+
+
+class ClientShipmentPageResponse(BaseModel):
+    items: list[ClientShipmentSummaryResponse]
+    next_cursor: str | None
+
+    @classmethod
+    def from_page(cls, page: ClientShipmentPage) -> ClientShipmentPageResponse:
+        return cls(
+            items=[ClientShipmentSummaryResponse.from_summary(item) for item in page.items],
+            next_cursor=page.next_cursor,
         )
 
 

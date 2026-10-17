@@ -1,7 +1,7 @@
 # NFPL Access Control Service - Test Report
 
 Report date: 2026-10-17  
-Scope: Phases 1 through 4, Phases 5A-5C, Phase 6A, and zero-cost deployment amendment
+Scope: Phases 1 through 4, Phases 5A-5C, Phases 6A-6B, and zero-cost deployment amendment
 
 ## Environment
 
@@ -28,7 +28,7 @@ Commands executed:
 .venv\Scripts\ruff.exe check .
 .venv\Scripts\ruff.exe format --check .
 .venv\Scripts\python.exe -m pip check
-.venv\Scripts\pytest.exe --cov=src/nfpl_access_control --cov-report=term-missing -q
+.venv\Scripts\python.exe -m pytest --cov=nfpl_access_control --cov-report=term
 .venv\Scripts\alembic.exe upgrade head
 .venv\Scripts\alembic.exe check
 .venv\Scripts\alembic.exe downgrade base
@@ -40,10 +40,14 @@ npm run lint
 npm test
 npm run build
 npm audit --omit=dev
+cd ..
+.venv\Scripts\python scripts\phase6b_http_smoke.py
 ~~~
 
 Additional Python assertions loaded the ASGI app, generated OpenAPI, checked
-the Phase 5C operations paths, and called the hidden-from-schema `/health` route. Earlier
+the Phase 5C operations paths, and called the hidden-from-schema `/health` route. The
+Phase 6B smoke script also started a real Uvicorn server on loopback with a
+disposable migrated SQLite database and used real HTTP requests. Earlier
 Phase 3 verification parsed `render.yaml` and checked its free-plan and health
 configuration.
 
@@ -53,20 +57,26 @@ Final results:
 - Ruff format check: pass
 - Dependency consistency: pass, no broken requirements
 - Render YAML parse/config assertions: pass
-- Pytest: **113 passed, 0 failed, 0 skipped**, 1 third-party deprecation warning
-- Statement coverage: **85%** (3,750 statements, 579 missed)
-- Alembic upgrade, full downgrade, and re-upgrade: pass through a disposable
+- Pytest: **114 passed, 0 failed, 0 skipped**, 1 third-party deprecation warning
+- Statement coverage: **85%** (3,766 statements, 576 missed)
+- Alembic upgrade and full downgrade: pass through a disposable
   canonical `DATABASE_URL`
 - Alembic model/schema drift check: pass, no new upgrade operations detected
-- Import/OpenAPI smoke check: pass; 56 documented API paths
+- Import/OpenAPI smoke check: pass; 57 documented API paths
 - Benchmarks: **not run**; benchmark implementation is Phase 6
 - Frontend TypeScript: pass
 - Frontend ESLint: pass, 0 errors/warnings
-- Frontend Vitest: **13 passed, 0 failed, 0 skipped** across 2 files
-- Frontend production build: pass; 35 modules transformed
-- Frontend production bundle: 288.03 kB JavaScript (90.12 kB gzip) and
-  33.03 kB CSS (6.41 kB gzip)
+- Frontend Vitest: **19 passed, 0 failed, 0 skipped** across 3 files
+- Frontend production build: pass; 39 modules transformed
+- Frontend production bundle: 310.15 kB JavaScript (94.70 kB gzip) and
+  33.96 kB CSS (6.55 kB gzip)
 - Frontend runtime dependency audit: pass, 0 known vulnerabilities
+- Real HTTP Admin smoke: pass for health, login, reference data, dashboard,
+  employee listing, scoped grant/revoke, job create/get, assignment
+  suggestions, job audit, and urgent-request retrieval. The fixture contained
+  no pending urgent request, so decision mutation was covered by mocked UI and
+  backend service/API tests rather than this HTTP smoke.
+- Browser automation: not run; no browser automation tool is installed.
 
 The warning comes from FastAPI's installed test-client compatibility layer:
 `StarletteDeprecationWarning` recommends a future `httpx2` transition. It
@@ -312,6 +322,31 @@ should track it.
 - API behavior was tested with controlled `fetch` responses. A live
   browser-to-running-FastAPI integration was not executed and is not claimed.
 
+## Phase 6B Admin Scenarios Verified
+
+- The active creation route loads protected client/branch reference data,
+  handles loading/error/empty states, submits selected IDs, then loads live
+  assignment suggestions and supports assignment or leaving a role unassigned.
+- Admin Overview, All Jobs, Job Details, Employee Directory, Urgent Requests,
+  and Audit History are active routes. Archive, ordinary cancellation,
+  filed-job exceptional cancellation, reopening requests, account actions, and
+  supported request decisions use their existing secured API contracts.
+- Employee pages embed scoped role management for client, branch, direction,
+  and mode. Grants require a reason; revocations require a reason plus explicit
+  confirmation; successful mutations refresh directory data. Admin is
+  deliberately not offered as a direct grant option.
+- Request decisions transmit the backend request version. Stale/conflict and
+  authorization explanations are surfaced without weakening backend checks.
+- Six targeted React tests cover reference selections and job creation, scoped
+  grants, confirmed revocation, stale urgent decisions, versioned
+  cancellation, and archival authorization failure. Route-level Admin
+  protection remains covered by the preserved Phase 6A suite.
+- One backend regression verifies that reference data is Admin-only, sorted,
+  and that urgent responses expose the optimistic request version required by
+  decision endpoints.
+- The disposable real-HTTP run exercised a running Uvicorn application rather
+  than ASGI-only TestClient calls. It is not a browser UI test.
+
 ## Failed Attempts and Corrections
 
 Results are recorded rather than hidden:
@@ -399,6 +434,17 @@ Results are recorded rather than hidden:
     unsupported `expect.stringEndingWith` assertions in tests; 11 of 13 tests
     passed. The assertions now use supported regex matchers. The repeated
     typecheck, lint, all 13 tests, and production build passed.
+23. The first Phase 6B full lint pass found import ordering and long lines only
+    in the new HTTP smoke script. Ruff formatting fixed them before final
+    verification.
+24. The first real-HTTP smoke completed every API assertion but exited nonzero
+    because Windows briefly retained the temporary SQLite handle. The harness
+    now waits after Uvicorn termination; the repeated run passed and cleaned up.
+25. The first full Phase 6B backend run had 113 passes and one historical
+    eligibility failure. The production rule was correct: fixture users used
+    the real creation clock, which had moved past the test's fixed historical
+    timestamp. Giving synthetic users an explicit earlier creation timestamp
+    made the test deterministic; the final 114-test run passed.
 
 ## Not Yet Verified
 
@@ -419,6 +465,7 @@ a live PostgreSQL server; local concurrency coverage uses SQLite's single-writer
 behavior plus SQLAlchemy optimistic locking. The database-backed lockout is per known account rather than a
 distributed IP/device rate limiter; this avoids mandatory infrastructure but
 should be supplemented at the reverse proxy in production. No latency or scale
-figure has been measured or claimed. Phase 6A has no live browser/backend
-end-to-end run, accessibility audit, or deployed Vercel smoke test. Dashboard
-data/actions remain deferred to Phase 6B.
+figure has been measured or claimed. Phase 6B has a real loopback HTTP API
+smoke run but no browser automation, accessibility audit, or deployed Vercel
+smoke test. Operational employee/client frontend screens remain deferred beyond
+Phase 6B.

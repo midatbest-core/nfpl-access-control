@@ -5,6 +5,7 @@ import type {
   LoginResponse,
   RegistrationRequest,
   RegistrationResponse,
+  AdminJob, AuditEvent, DashboardOverview, EmployeePage, Job, Suggestion, UrgentRequest, ReferenceData,
 } from './contracts'
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim()
@@ -93,4 +94,23 @@ export const api = {
   logout(token: string): Promise<void> {
     return request('/v1/auth/logout', { method: 'POST' }, token)
   },
+  adminOverview: (token: string) => request<DashboardOverview>('/v1/admin/dashboard/overview', {}, token),
+  urgentRequests: (token: string) => request<UrgentRequest[]>('/v1/admin/dashboard/urgent-requests', {}, token),
+  referenceData: (token: string) => request<ReferenceData>('/v1/admin/reference-data', {}, token),
+  adminJobs: (token: string, search = '', offset = 0) => request<AdminJob[]>(`/v1/admin/jobs?search=${encodeURIComponent(search)}&offset=${offset}&limit=25`, {}, token),
+  job: (token: string, id: string) => request<Job>(`/v1/jobs/${id}`, {}, token),
+  createJob: (token: string, payload: Omit<Job, 'id' | 'stage' | 'version'>) => request<Job>('/v1/jobs', { method: 'POST', body: JSON.stringify(payload) }, token),
+  archiveJob: (token: string, id: string, expected_version: number, reason: string) => request<AdminJob>(`/v1/admin/jobs/${id}/archive`, { method: 'POST', body: JSON.stringify({ expected_version, reason }) }, token),
+  cancelJob: (token: string, id: string, expected_version: number, reason: string) => request<Job>(`/v1/jobs/${id}/cancel`, { method: 'POST', body: JSON.stringify({ expected_version, reason }) }, token),
+  suggestions: (token: string, id: string) => request<Record<string, Suggestion[]>>(`/v1/admin/jobs/${id}/assignment-suggestions`, {}, token),
+  assign: (token: string, id: string, responsibility: string, target_user_id: string | null, reason: string) => request(`/v1/admin/jobs/${id}/assignment`, { method: 'PUT', body: JSON.stringify({ responsibility, target_user_id, reason }) }, token),
+  employees: (token: string, page = 1, search = '') => request<EmployeePage>(`/v1/admin/employees?page=${page}&limit=25&search=${encodeURIComponent(search)}`, {}, token),
+  employeeAction: (token: string, id: string, action: 'approve'|'reject'|'activate'|'deactivate', reason: string) => request<EmployeeProfile>(`/v1/admin/employees/${id}/${action}`, { method: 'POST', body: JSON.stringify({ reason }) }, token),
+  audit: (token: string, jobId: string) => request<AuditEvent[]>(`/v1/admin/jobs/${jobId}/audit`, {}, token),
+  absenceDecision: (token: string, id: string, expected_version: number, approved: boolean, reason: string) => request(`/v1/admin/absence-nominations/${id}/decision`, { method: 'POST', body: JSON.stringify({ expected_version, approved, reason }) }, token),
+  editDecision: (token: string, id: string, expected_version: number, approved: boolean, reason: string) => request(`/v1/admin/edit-requests/${id}/decision`, { method: 'POST', body: JSON.stringify({ expected_version, approved, reason }) }, token),
+  exceptionApproval: (token: string, id: string, expected_version: number) => request(`/v1/admin/exception-requests/${id}/approve`, { method: 'POST', body: JSON.stringify({ expected_version }) }, token),
+  exceptionRequest: (token: string, id: string, action: 'cancel' | 'reopen', reason: string) => request(`/v1/admin/jobs/${id}/exception-requests`, { method: 'POST', body: JSON.stringify({ action, reason }) }, token),
+  grantRole: (token: string, payload: unknown) => request('/v1/admin/role-assignments', { method: 'POST', body: JSON.stringify(payload) }, token),
+  revokeRole: (token: string, id: string, reason: string) => request(`/v1/admin/role-assignments/${id}/revoke`, { method: 'POST', body: JSON.stringify({ reason }) }, token),
 }

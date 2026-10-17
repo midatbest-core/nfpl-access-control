@@ -1,8 +1,8 @@
 # NFPL Access Control Service
 
 Security-focused authorization for NFPL customs-brokerage shipment jobs. This
-repository currently implements **Phases 1 through 4, Phases 5A-5C, and Phase
-6A**: the project skeleton,
+repository currently implements **Phases 1 through 4, Phases 5A-5C, and Phases
+6A-6B**: the project skeleton,
 database and authentication foundation, deployment configuration, scoped RBAC,
 central authorization explanations, Admin-controlled grants/revocations, and
 configurable safe roles, plus transactional shipment workflow, responsibility,
@@ -20,6 +20,10 @@ Phase 6A adds a Vercel-ready React/TypeScript frontend foundation with working
 registration, login, logout, session expiry/revocation handling, role-aware
 routing, accessible shared UI components, and clearly labeled placeholders for
 later dashboard integrations.
+Phase 6B connects the Admin overview, shipment directory/details and creation,
+assignment suggestions, employee lifecycle and scoped role management, urgent
+requests, archival, exceptional transitions, and audit viewer to the secured
+backend APIs.
 
 The original `NFPL_Access_Control_Assignment.pdf` is retained as the source
 brief. The approved expanded requirements govern the phased implementation.
@@ -224,6 +228,24 @@ authorization authority: frontend role guards use current effective grant
 intervals only to improve navigation and cannot grant backend access. Public
 registration asks for the backend branch ID because no public branch-directory
 endpoint exists; it never offers role selection.
+
+Admin job creation uses the protected `GET /v1/admin/reference-data` endpoint
+to show client and branch names while submitting only their identifiers.
+Employee role controls display effective scopes and require reasons for grants
+and confirmed revocations. Backend authorization remains authoritative,
+including self-escalation prevention, scoped Admin grants, optimistic request
+versions, and shipment visibility.
+
+Run the disposable real-HTTP Admin smoke workflow with:
+
+~~~powershell
+.venv\Scripts\python scripts\phase6b_http_smoke.py
+~~~
+
+The command migrates a temporary SQLite database, starts a hidden local Uvicorn
+process, bootstraps temporary test identities, exercises the Admin HTTP APIs,
+then stops the process and removes the database. It does not use local
+development or production data.
 
 ## Zero-Cost Demonstration Deployment
 
@@ -456,9 +478,9 @@ external tamper-evident archive remain possible defense-in-depth work.
 
 The current backend intentionally does **not** include general permission requests or
 independent Admin-role grant approval, deterministic seed/load generation,
-benchmarks, or the final design document/demo. Phase 6A dashboard pages beyond
-authentication, shared layout, and role-aware navigation are explicit
-placeholders; Phase 6B will connect them to existing APIs. Notifications
+benchmarks, or the final design document/demo. Maker, Checker, Filing Officer,
+Client Viewer, notifications, and My Work frontend screens remain placeholders
+for later approved frontend phases. Notifications
 are in-app and request-driven only; email, push delivery, and a background
 dispatcher are outside the frozen scope. Audit events and notifications remain
 distinct: each created notification is audited, but most audit events do not
@@ -474,6 +496,7 @@ approved benchmark phase.
 
 SQLite is for local development, not Render/Railway persistence. PostgreSQL has
 not yet been exercised by this local test run. No latency or scale claim is made
-until the approved benchmark phase is executed. Frontend API tests use mocked
-`fetch`; a live browser-to-FastAPI integration or Vercel deployment was not
-performed in Phase 6A.
+until the approved benchmark phase is executed. Frontend component tests use
+mocked `fetch`; Phase 6B additionally verified Admin APIs over real HTTP against
+a temporary Uvicorn/SQLite instance. Browser automation, accessibility audit,
+and a Vercel deployment were not performed.

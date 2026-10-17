@@ -54,6 +54,7 @@ class UrgentRequestItem:
     requester_user_id: str
     reason: str
     job_id: str | None
+    version: int
 
 
 class DashboardService:
@@ -170,6 +171,7 @@ class DashboardService:
                 item.requester_user_id,
                 item.reason,
                 None,
+                item.version,
             )
             for item in self.session.scalars(
                 select(AbsenceNomination)
@@ -185,6 +187,7 @@ class DashboardService:
                 item.requested_by_user_id,
                 item.reason,
                 item.job_id,
+                item.job.version,
             )
             for item in self.session.scalars(
                 select(JobEditRequest)
@@ -200,6 +203,7 @@ class DashboardService:
                 item.requested_by_user_id,
                 item.reason,
                 item.job_id,
+                item.job.version,
             )
             for item in self.session.scalars(
                 select(ExceptionalTransitionRequest)

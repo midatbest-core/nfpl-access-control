@@ -11,6 +11,8 @@ from nfpl_access_control.api.dependencies import CurrentActor, DatabaseSession
 from nfpl_access_control.models import (
     AbsenceNomination,
     AbsenceNominationJob,
+    Branch,
+    Client,
     Job,
 )
 from nfpl_access_control.schemas.operations import (
@@ -19,8 +21,10 @@ from nfpl_access_control.schemas.operations import (
     AbsenceOutcomeResponse,
     AbsenceOverrideRequest,
     AdminJobResponse,
+    AdminReferenceDataResponse,
     DashboardOverviewResponse,
     NotificationResponse,
+    ReferenceRecordResponse,
     UrgentRequestResponse,
     VersionedDecision,
     VersionedReason,
@@ -279,6 +283,26 @@ def urgent_requests(
         return [UrgentRequestResponse.model_validate(item) for item in items]
     except DashboardAccessError as error:
         _handle(error, session)
+
+
+@router.get("/admin/reference-data", response_model=AdminReferenceDataResponse)
+def admin_reference_data(
+    actor: CurrentActor, session: DatabaseSession
+) -> AdminReferenceDataResponse:
+    try:
+        DashboardService(session).overview(actor=actor)
+    except DashboardAccessError as error:
+        _handle(error, session)
+    return AdminReferenceDataResponse(
+        clients=[
+            ReferenceRecordResponse(id=item.id, code=item.code, name=item.name)
+            for item in session.scalars(select(Client).order_by(Client.name, Client.id))
+        ],
+        branches=[
+            ReferenceRecordResponse(id=item.id, code=item.code, name=item.name)
+            for item in session.scalars(select(Branch).order_by(Branch.name, Branch.id))
+        ],
+    )
 
 
 @router.get("/admin/jobs", response_model=list[AdminJobResponse])

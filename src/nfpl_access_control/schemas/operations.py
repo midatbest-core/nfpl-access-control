@@ -127,6 +127,18 @@ class UrgentRequestResponse(BaseModel):
     requester_user_id: str
     reason: str
     job_id: str | None
+    version: int
+
+
+class ReferenceRecordResponse(BaseModel):
+    id: str
+    code: str
+    name: str
+
+
+class AdminReferenceDataResponse(BaseModel):
+    clients: list[ReferenceRecordResponse]
+    branches: list[ReferenceRecordResponse]
 
 
 class AdminJobResponse(BaseModel):

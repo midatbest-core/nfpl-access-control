@@ -63,3 +63,13 @@ export interface EmployeeProfile {
 export interface ErrorEnvelope {
   detail?: string | { explanation?: string; reason_code?: string } | unknown[]
 }
+
+export interface DashboardOverview { total_jobs: number; jobs_by_stage: Record<string, number>; total_employees: number; employees_by_availability: Record<string, number>; pending_requests: number; reassignment_required_jobs: number }
+export interface UrgentRequest { request_type: string; request_id: string; requested_at: string; requester_user_id: string; reason: string; job_id: string | null; version: number }
+export interface ReferenceRecord { id: string; code: string; name: string }
+export interface ReferenceData { clients: ReferenceRecord[]; branches: ReferenceRecord[] }
+export interface AdminJob { id: string; reference: string; client_id: string; branch_id: string; stage: string; maker_user_id: string | null; checker_user_id: string | null; filing_officer_user_id: string | null; created_at: string; updated_at: string; archived_at: string | null; version: number }
+export interface Job { id: string; reference: string; client_id: string; branch_id: string; direction: JobDirection; mode: JobMode; stage: string; goods_description: string; container_reference: string | null; version: number }
+export interface EmployeePage { items: EmployeeProfile[]; total: number; page: number; limit: number }
+export interface Suggestion { responsibility: string; user_id: string; display_name: string; pending_workload: number }
+export interface AuditEvent { id: string; job_id: string | null; actor_user_id: string; action: string; occurred_at: string; reason: string; denied: boolean }

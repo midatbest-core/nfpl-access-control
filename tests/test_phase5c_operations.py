@@ -68,6 +68,48 @@ def test_phase5c_routes_require_authentication(api_client: TestClient, path: str
     assert response.status_code == 401
 
 
+def test_admin_reference_data_is_secured_and_urgent_requests_include_versions(
+    api_client: TestClient,
+    session: Session,
+    active_user: User,
+) -> None:
+    headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
+    assert api_client.get("/v1/admin/reference-data", headers=headers).status_code == 403
+
+    branch_b = Branch(code="ZZZ", name="Zulu Branch")
+    branch_a = Branch(code="AAA", name="Alpha Branch")
+    client_b = Client(code="ZZZ", name="Zulu Client")
+    client_a = Client(code="AAA", name="Alpha Client")
+    nominee = _user(session, "reference-nominee")
+    session.add_all([branch_b, branch_a, client_b, client_a])
+    nomination = AbsenceService(session).nominate(
+        actor=active_user,
+        nominee_user_id=nominee.id,
+        valid_from=NOW + timedelta(hours=1),
+        valid_until=NOW + timedelta(hours=2),
+        reason="Versioned urgent request",
+        now=NOW,
+    )
+    _grant(session, active_user, ADMIN_ROLE, active_user)
+    session.commit()
+
+    response = api_client.get("/v1/admin/reference-data", headers=headers)
+    assert response.status_code == 200
+    assert [item["name"] for item in response.json()["clients"]] == [
+        "Alpha Client",
+        "Zulu Client",
+    ]
+    assert [item["name"] for item in response.json()["branches"]] == [
+        "Alpha Branch",
+        "Zulu Branch",
+    ]
+
+    urgent = api_client.get("/v1/admin/dashboard/urgent-requests", headers=headers)
+    assert urgent.status_code == 200
+    assert urgent.json()[0]["request_id"] == nomination.id
+    assert urgent.json()[0]["version"] == nomination.version
+
+
 def test_absence_admin_route_does_not_leak_resource_existence(
     api_client: TestClient,
     session: Session,
@@ -109,6 +151,8 @@ def _user(
         display_name=name.title(),
         kind=UserKind.STAFF,
         availability=availability,
+        created_at=NOW - timedelta(days=1),
+        updated_at=NOW - timedelta(days=1),
     )
     session.add(user)
     session.flush()

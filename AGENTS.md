@@ -130,6 +130,14 @@ explicit placeholders until an approved later phase. Browser sessions use
 `sessionStorage`, clear on protected 401 responses, and never log credentials
 or tokens.
 
+Phase 6B Admin pages use the real protected dashboard, job, employee, scoped
+role-assignment, urgent-request, reference-data, and audit APIs. Client and
+branch selectors display names but submit identifiers. Role changes require
+reasons, revocation confirmation, and a directory refresh; frontend guards and
+controls never replace backend scope, self-escalation, independent-approval, or
+optimistic-version enforcement. The disposable HTTP smoke script must use only
+a temporary database and must not claim browser coverage.
+
 ## Zero-Cost Deployment Constraints
 
 - Keep the backend as one lightweight FastAPI/Uvicorn web process. Do not add

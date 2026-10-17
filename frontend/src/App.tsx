@@ -4,7 +4,10 @@ import { AuthProvider } from './auth/AuthContext'
 import { ROLE } from './auth/roles'
 import { AppShell } from './components/AppShell'
 import { AccountStatusPage, LoginPage, RegisterPage } from './pages/AuthPages'
-import { AdminOverviewPage, NotFoundPage, PlaceholderPage, UnauthorizedPage } from './pages/WorkspacePages'
+import { NotFoundPage, PlaceholderPage, UnauthorizedPage } from './pages/WorkspacePages'
+import { AdminAuditPage, AdminJobsPage, AdminOverviewPage, EmployeesPage } from './pages/AdminPages'
+import { JobDetailsPage, RequestsPage } from './pages/AdminRemaining'
+import { CreateJobWithSelectionsPage } from './pages/AdminCompletion'
 import { ProtectedRoute, PublicOnlyRoute, RoleLanding } from './routes/RouteGuards'
 
 const operationalRoles = [ROLE.maker, ROLE.checker, ROLE.filingOfficer]
@@ -23,10 +26,12 @@ export function App() {
       <Route path="/" element={<RoleLanding />} />
       <Route element={<SecuredShell />}>
         <Route path="admin" element={<ProtectedRoute allowedRoles={[ROLE.admin]}><AdminOverviewPage /></ProtectedRoute>} />
-        <Route path="admin/jobs" element={<ProtectedRoute allowedRoles={[ROLE.admin]}><PlaceholderPage page="jobs" /></ProtectedRoute>} />
-        <Route path="admin/employees" element={<ProtectedRoute allowedRoles={[ROLE.admin]}><PlaceholderPage page="employees" /></ProtectedRoute>} />
-        <Route path="admin/requests" element={<ProtectedRoute allowedRoles={[ROLE.admin]}><PlaceholderPage page="requests" /></ProtectedRoute>} />
-        <Route path="admin/audit" element={<ProtectedRoute allowedRoles={[ROLE.admin]}><PlaceholderPage page="audit" /></ProtectedRoute>} />
+        <Route path="admin/jobs" element={<ProtectedRoute allowedRoles={[ROLE.admin]}><AdminJobsPage /></ProtectedRoute>} />
+        <Route path="admin/jobs/new" element={<ProtectedRoute allowedRoles={[ROLE.admin]}><CreateJobWithSelectionsPage /></ProtectedRoute>} />
+        <Route path="admin/jobs/:jobId" element={<ProtectedRoute allowedRoles={[ROLE.admin]}><JobDetailsPage /></ProtectedRoute>} />
+        <Route path="admin/employees" element={<ProtectedRoute allowedRoles={[ROLE.admin]}><EmployeesPage /></ProtectedRoute>} />
+        <Route path="admin/requests" element={<ProtectedRoute allowedRoles={[ROLE.admin]}><RequestsPage /></ProtectedRoute>} />
+        <Route path="admin/audit" element={<ProtectedRoute allowedRoles={[ROLE.admin]}><AdminAuditPage /></ProtectedRoute>} />
         <Route path="work" element={<ProtectedRoute allowedRoles={operationalRoles}><PlaceholderPage page="work" /></ProtectedRoute>} />
         <Route path="work/jobs/:jobId" element={<ProtectedRoute allowedRoles={operationalRoles}><PlaceholderPage page="job" /></ProtectedRoute>} />
         <Route path="notifications" element={<ProtectedRoute allowedRoles={[ROLE.admin, ...operationalRoles, ROLE.clientViewer]}><PlaceholderPage page="notifications" /></ProtectedRoute>} />

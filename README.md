@@ -1,7 +1,8 @@
 # NFPL Access Control Service
 
 Security-focused authorization for NFPL customs-brokerage shipment jobs. This
-repository currently implements **Phases 1 through 4 and Phases 5A-5C**: the project skeleton,
+repository currently implements **Phases 1 through 4, Phases 5A-5C, and Phase
+6A**: the project skeleton,
 database and authentication foundation, deployment configuration, scoped RBAC,
 central authorization explanations, Admin-controlled grants/revocations, and
 configurable safe roles, plus transactional shipment workflow, responsibility,
@@ -15,6 +16,10 @@ correction justification, and fresh independent verification.
 Phase 5C adds approved absence replacement and authorization-bounded bulk
 delegation, audited in-app notifications, an actionable keyset-paginated My
 Work queue, and a restricted Admin operations dashboard.
+Phase 6A adds a Vercel-ready React/TypeScript frontend foundation with working
+registration, login, logout, session expiry/revocation handling, role-aware
+routing, accessible shared UI components, and clearly labeled placeholders for
+later dashboard integrations.
 
 The original `NFPL_Access_Control_Assignment.pdf` is retained as the source
 brief. The approved expanded requirements govern the phased implementation.
@@ -31,6 +36,9 @@ The service is a Python 3.12+ modular monolith:
 - `schemas/` owns Pydantic v2 API contracts.
 - `db/` owns engine and session lifecycle.
 - `alembic/` owns schema history.
+- `frontend/src/` contains the React application, typed native-fetch client,
+  authentication state, route guards, reusable components, pages, and Vitest
+  tests. Frontend code never receives database credentials.
 
 One Uvicorn web process serves the request-driven API. There is no Celery,
 Redis, broker, worker, scheduler, or mandatory third-party AI service. Future
@@ -182,6 +190,41 @@ The health endpoint intentionally avoids a database query so platform probes do
 not keep a free PostgreSQL compute awake. Database readiness is established by
 successful startup migration and ordinary request failures remain visible.
 
+## Frontend Development
+
+Use a supported Node release (Node 22 LTS, Node 24 LTS, or newer) and install
+the separately managed frontend dependencies:
+
+~~~powershell
+cd frontend
+Copy-Item .env.example .env.local
+npm install
+npm run dev
+~~~
+
+Set `VITE_API_BASE_URL` in `.env.local` to the backend origin, without a
+trailing API path (for example `http://localhost:8000`). Vite exposes
+`VITE_*` variables to browser code, so this value must never contain a
+database URL, password, bearer token, or other secret. Configure the backend's
+`NFPL_CORS_ALLOWED_ORIGINS` with the exact Vite origin (normally
+`http://localhost:5173`) when running the two development servers separately.
+
+Canonical frontend checks are:
+
+~~~powershell
+npm run typecheck
+npm run lint
+npm test
+npm run build
+~~~
+
+Bearer credentials are kept in tab-scoped `sessionStorage`, never logged, and
+cleared on logout, local expiry, or a protected API 401. The server remains the
+authorization authority: frontend role guards use current effective grant
+intervals only to improve navigation and cannot grant backend access. Public
+registration asks for the backend branch ID because no public branch-directory
+endpoint exists; it never offers role selection.
+
 ## Zero-Cost Demonstration Deployment
 
 ### 1. Neon PostgreSQL
@@ -222,16 +265,19 @@ No Railway-specific service is required by the application.
 
 ### 3. Vercel frontend
 
-No frontend source exists through Phase 5A, so a speculative Vercel project file is
-not checked in. When the frontend is introduced:
+The `frontend/` directory contains the Vite project and a `vercel.json`
+single-page-app rewrite.
 
-1. Import its directory as a Vercel project and keep framework auto-detection.
-2. Add a public API-base variable appropriate to the chosen framework, such as
-   `VITE_API_BASE_URL` or `NEXT_PUBLIC_API_BASE_URL`, containing the Render
-   HTTPS URL. Do not place database URLs or API bearer credentials in public
-   variables.
-3. Configure Preview and Production separately, deploy, then allow their exact
-   origins in the backend CORS setting.
+1. Import the repository into Vercel and set **Root Directory** to `frontend`.
+2. Keep Vite framework detection, build command `npm run build`, and output
+   directory `dist`.
+3. Set `VITE_API_BASE_URL` to the Render/Railway HTTPS backend origin. Do not
+   place database URLs or bearer credentials in any frontend environment
+   variable.
+4. Configure Preview and Production separately. Add every deployed frontend
+   origin explicitly to backend `NFPL_CORS_ALLOWED_ORIGINS`; wildcard origins
+   are rejected.
+5. Verify login and logout against the deployed backend after CORS is applied.
 
 Vercel documents framework-aware public variable prefixes and environment
 scopes at <https://vercel.com/docs/environment-variables/framework-environment-variables>
@@ -408,9 +454,11 @@ external tamper-evident archive remain possible defense-in-depth work.
 
 ## Current Limitations
 
-Phase 5C intentionally does **not** include general permission requests or
+The current backend intentionally does **not** include general permission requests or
 independent Admin-role grant approval, deterministic seed/load generation,
-benchmarks, frontend source, or the final design document/demo. Notifications
+benchmarks, or the final design document/demo. Phase 6A dashboard pages beyond
+authentication, shared layout, and role-aware navigation are explicit
+placeholders; Phase 6B will connect them to existing APIs. Notifications
 are in-app and request-driven only; email, push delivery, and a background
 dispatcher are outside the frozen scope. Audit events and notifications remain
 distinct: each created notification is audited, but most audit events do not
@@ -426,4 +474,6 @@ approved benchmark phase.
 
 SQLite is for local development, not Render/Railway persistence. PostgreSQL has
 not yet been exercised by this local test run. No latency or scale claim is made
-until the Phase 6 benchmark is executed.
+until the approved benchmark phase is executed. Frontend API tests use mocked
+`fetch`; a live browser-to-FastAPI integration or Vercel deployment was not
+performed in Phase 6A.

@@ -1,7 +1,7 @@
 # NFPL Access Control Service - Test Report
 
 Report date: 2026-10-17  
-Scope: Phases 1 through 4 and Phases 5A-5C plus zero-cost deployment amendment
+Scope: Phases 1 through 4, Phases 5A-5C, Phase 6A, and zero-cost deployment amendment
 
 ## Environment
 
@@ -13,6 +13,8 @@ Scope: Phases 1 through 4 and Phases 5A-5C plus zero-cost deployment amendment
 - Psycopg 3.3.6
 - Pytest 9.1.1
 - SQLite temporary databases
+- Node.js 25.8.1 and npm 11.11.0 (frontend verification)
+- React 19.3.1, Vite 8.3.4, TypeScript 6.0.3, Vitest 4.1.12
 
 Dependencies were installed from `pyproject.toml` into the repository-local
 `.venv`. The Windows Store `python` alias was unusable, so setup used the
@@ -32,6 +34,12 @@ Commands executed:
 .venv\Scripts\alembic.exe downgrade base
 .venv\Scripts\alembic.exe upgrade head
 .venv\Scripts\python.exe -m compileall -q src tests alembic
+cd frontend
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm audit --omit=dev
 ~~~
 
 Additional Python assertions loaded the ASGI app, generated OpenAPI, checked
@@ -52,6 +60,13 @@ Final results:
 - Alembic model/schema drift check: pass, no new upgrade operations detected
 - Import/OpenAPI smoke check: pass; 56 documented API paths
 - Benchmarks: **not run**; benchmark implementation is Phase 6
+- Frontend TypeScript: pass
+- Frontend ESLint: pass, 0 errors/warnings
+- Frontend Vitest: **13 passed, 0 failed, 0 skipped** across 2 files
+- Frontend production build: pass; 35 modules transformed
+- Frontend production bundle: 288.03 kB JavaScript (90.12 kB gzip) and
+  33.03 kB CSS (6.41 kB gzip)
+- Frontend runtime dependency audit: pass, 0 known vulnerabilities
 
 The warning comes from FastAPI's installed test-client compatibility layer:
 `StarletteDeprecationWarning` recommends a future `httpx2` transition. It
@@ -271,6 +286,32 @@ should track it.
   indexes. Upgrade, drift check, full downgrade, and re-upgrade passed on a
   disposable SQLite database.
 
+## Phase 6A Frontend Scenarios Verified
+
+- Login validates email/password locally, calls only the documented login and
+  current-profile endpoints, stores an expiring bearer credential only in
+  tab-scoped `sessionStorage`, and routes Admin and operational identities to
+  their approved landing pages.
+- Registration validates name, email, branch ID, and password confirmation,
+  submits exactly the backend registration contract, and offers no role or
+  privilege field. Successful requests show the Pending approval state.
+- Pending and Disabled login denials share a privacy-safe account-unavailable
+  screen rather than exposing account-state details.
+- Logout calls the documented revocation endpoint, clears local authentication
+  state even if that request fails, and returns to login. Locally expired
+  sessions and server-revoked sessions receiving a protected 401 are cleared.
+- Protected routes deny role mismatches without shipment disclosure. Navigation
+  combines multiple currently effective role assignments and excludes grants at
+  exact expiry/revocation boundaries.
+- Structured authorization explanations and reason codes reach the error UI;
+  network failures use a safe message without leaking low-level details.
+- The shared responsive shell, loading/error/empty states, status badges,
+  confirmation dialog, search field, pagination component, and notification
+  placeholder compile in the production build. Non-authentication dashboard
+  routes are explicitly labeled placeholders rather than mock live data.
+- API behavior was tested with controlled `fetch` responses. A live
+  browser-to-running-FastAPI integration was not executed and is not claimed.
+
 ## Failed Attempts and Corrections
 
 Results are recorded rather than hidden:
@@ -350,6 +391,14 @@ Results are recorded rather than hidden:
 20. The keyset pagination lint pass found a missing `and_` import while its
     focused tests passed. The import and a two-page no-duplicates regression test
     were added before final verification.
+21. The first frontend install rejected TypeScript 7 because the current
+    TypeScript ESLint peer range ends below 6.1. The project now uses TypeScript
+    6.0.3; no peer checks were bypassed. Vitest/jsdom were also aligned to
+    releases supporting the local Node runtime.
+22. The first frontend verification compiled all application code but found two
+    unsupported `expect.stringEndingWith` assertions in tests; 11 of 13 tests
+    passed. The assertions now use supported regex matchers. The repeated
+    typecheck, lint, all 13 tests, and production build passed.
 
 ## Not Yet Verified
 
@@ -370,4 +419,6 @@ a live PostgreSQL server; local concurrency coverage uses SQLite's single-writer
 behavior plus SQLAlchemy optimistic locking. The database-backed lockout is per known account rather than a
 distributed IP/device rate limiter; this avoids mandatory infrastructure but
 should be supplemented at the reverse proxy in production. No latency or scale
-figure has been measured or claimed.
+figure has been measured or claimed. Phase 6A has no live browser/backend
+end-to-end run, accessibility audit, or deployed Vercel smoke test. Dashboard
+data/actions remain deferred to Phase 6B.

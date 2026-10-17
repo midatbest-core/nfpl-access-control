@@ -7,6 +7,8 @@ This is a Python 3.12+ modular monolith. Application code lives under
 cryptographic helpers in `core/`, SQLAlchemy setup in `db/`, persistence
 models in `models/`, Pydantic contracts in `schemas/`, and use-case logic in
 `services/`. Alembic migrations live in `alembic/`; tests live in `tests/`.
+The Vite/React/TypeScript client lives in `frontend/`, with application code
+under `frontend/src/` and frontend tests under `frontend/src/test/`.
 Keep authorization and workflow decisions out of routers.
 
 ## Build, Test, and Development Commands
@@ -16,6 +18,9 @@ Create a virtual environment and install development dependencies with
 head`, run the API with `uvicorn nfpl_access_control.main:app --reload`, run
 tests with `pytest`, and run static checks with `ruff check .`. Prefer these
 checked-in commands over machine-specific instructions.
+For the frontend, run `npm install` once in `frontend/`, then use `npm run
+dev`, `npm run typecheck`, `npm run lint`, `npm test`, and `npm run
+build`.
 
 ## Coding Style & Naming Conventions
 
@@ -23,6 +28,9 @@ Use Python type hints, four-space indentation, `PascalCase` classes, and
 `snake_case` functions and variables. Ruff is the formatter/linter authority;
 do not introduce a second style tool without a project need. Keep modules small,
 use SQLAlchemy 2.x typed declarative mappings, and use Pydantic v2 APIs.
+Frontend code uses strict TypeScript, functional React components, native
+`fetch`, Tailwind CSS, and ESLint. Keep API contracts typed and avoid adding
+state-management or UI-framework dependencies without an approved need.
 
 ## Testing Guidelines
 
@@ -31,6 +39,9 @@ test names explicit, and default to isolated temporary SQLite databases. Securit
 tests must exercise denial paths as well as allowed paths. Never weaken an
 invariant to satisfy a test. PostgreSQL compatibility must be considered even
 when local tests use SQLite.
+Frontend behavior uses Vitest and React Testing Library. Cover validation,
+session lifecycle, route denial, role-aware navigation, and safe API errors;
+route guards are UX only and never replace backend authorization.
 
 ## Commit & Pull Request Guidelines
 
@@ -113,6 +124,12 @@ notification has an audit event, but ordinary audit events do not imply a
 notification. Job notifications are re-filtered through current authorization;
 delegation expiry and absence remain authorization-time checks with no worker.
 
+Phase 6A provides only the frontend authentication, shared shell, typed API
+foundation, and role-aware route structure. Dashboard data/actions remain
+explicit placeholders until an approved later phase. Browser sessions use
+`sessionStorage`, clear on protected 401 responses, and never log credentials
+or tokens.
+
 ## Zero-Cost Deployment Constraints
 
 - Keep the backend as one lightweight FastAPI/Uvicorn web process. Do not add
@@ -123,7 +140,7 @@ delegation expiry and absence remain authorization-time checks with no worker.
   persistent local files in a cloud web service.
 - Target the checked-in Render Blueprint (or an equivalent Railway web service)
   for the API, a free PostgreSQL provider such as Neon, and Vercel for the
-  frontend when it exists.
+  checked-in `frontend/` on Vercel.
 - Delegation expiry is evaluated synchronously during authorization. Client
   status updates are request-driven and cursor/timestamp based. Expensive seed,
   load, benchmark, and audit-verification commands never run at app startup.

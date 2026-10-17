@@ -1,13 +1,14 @@
 # NFPL Access Control Service
 
 Security-focused authorization for NFPL customs-brokerage shipment jobs. This
-repository currently implements **Phases 1 through 4**: the project skeleton,
+repository currently implements **Phases 1 through 4 and Phase 5A**: the project skeleton,
 database and authentication foundation, deployment configuration, scoped RBAC,
 central authorization explanations, Admin-controlled grants/revocations, and
 configurable safe roles, plus transactional shipment workflow, responsibility,
 delegation, deterministic assignment suggestions, append-only audit history,
-immutable shipment versions, historical eligibility reconstruction, and
-client-safe incremental updates.
+immutable shipment versions, historical eligibility reconstruction,
+client-safe incremental updates, employee registration/password login,
+Admin-controlled account lifecycle, and the first-Admin bootstrap.
 
 The original `NFPL_Access_Control_Assignment.pdf` is retained as the source
 brief. The approved expanded requirements govern the phased implementation.
@@ -44,9 +45,12 @@ processes. Alembic migrations are restart-safe. Job mutations combine
 authorization rechecks, responsibility and state checks, optimistic locking,
 state changes, and append-only audit inserts in one database transaction.
 
-Authentication and authorization are separate. A protected route resolves its
-actor from a random bearer credential whose SHA-256 digest, not plaintext, is
-stored. Credentials and users can be disabled, and credentials can expire.
+Authentication and authorization are separate. Employee passwords use uniquely
+salted, memory-hard scrypt encodings. Successful login issues a random
+eight-hour bearer session whose SHA-256 digest, not plaintext, is stored.
+Sessions can be logged out or revoked, and disabling an account immediately
+revokes every outstanding credential. Five failed password attempts create a
+database-backed 15-minute lockout evaluated during login; no worker is needed.
 Visibility and action permissions are evaluated separately. A job action first
 requires visibility and then its specific permission. Public explanations redact
 nonexistent and unauthorized jobs identically, while internal policy decisions
@@ -83,16 +87,35 @@ implicitly load local environment files.
 
 ~~~powershell
 .venv\Scripts\alembic upgrade head
+.venv\Scripts\nfpl-bootstrap-admin --email admin@example.test --name "NFPL Admin" --branch-code HQ --branch-name "Head Office"
 .venv\Scripts\uvicorn nfpl_access_control.main:app --reload
 .venv\Scripts\pytest
 .venv\Scripts\ruff check .
 ~~~
 
+The bootstrap command prompts twice for the password without accepting it on
+the command line. It works only when no bootstrap marker and no Admin assignment
+exist, creates one globally scoped Admin atomically, records account/grant/audit
+history, and cannot overwrite an existing email or branch. Later Admin grants
+remain blocked until the independent sensitive-access approval flow is added.
+
 The available endpoints are:
 
 - `GET /health`: lightweight, unauthenticated process liveness check.
+- `POST /v1/auth/register`: creates a Pending staff account from name, email,
+  password, and branch. Registration never accepts a role.
+- `POST /v1/auth/login` and `POST /v1/auth/logout`: issue and revoke expiring
+  employee bearer sessions.
 - `GET /v1/identity/me`: requires `Authorization: Bearer <token>` and returns
   the database-resolved actor. Client-supplied actor IDs are ignored.
+- `GET /v1/employees/me` and `PATCH /v1/employees/me/availability`: show the
+  authenticated employee profile and update Available/Busy/Absent state.
+- `GET /v1/admin/employees` and `GET /v1/admin/employees/{id}`: searchable,
+  paginated Admin directory with roles/scopes, availability, account state, and
+  current pending workload.
+- `POST /v1/admin/employees/{id}/approve|reject|activate|deactivate`:
+  reasoned, audited account-state transitions. Disabled sessions stop working
+  immediately.
 - `POST /v1/authorization/jobs/{job_id}`: explains an authenticated actor's
   job permission without leaking hidden job existence.
 - `POST /v1/admin/roles`: creates a configurable role from safe permissions.
@@ -168,7 +191,7 @@ No Railway-specific service is required by the application.
 
 ### 3. Vercel frontend
 
-No frontend source exists through Phase 4, so a speculative Vercel project file is
+No frontend source exists through Phase 5A, so a speculative Vercel project file is
 not checked in. When the frontend is introduced:
 
 1. Import its directory as a Vercel project and keep framework auto-detection.
@@ -214,9 +237,14 @@ reserved for the later independent-approval flow.
 
 ## Core Data Model
 
-- `User`: staff, client, or service identity with active/inactive status,
+- `User`: staff, client, or service identity with Pending/Active/Disabled state,
   optional home branch, and Available/Busy/Absent employee availability.
 - `ApiCredential`: unique token digest with expiry and revocation timestamps.
+- `PasswordCredential`: one scrypt password encoding plus database-backed
+  failed-attempt and temporary-lockout state.
+- `AccountStateEvent`: immutable effective-time registration, approval,
+  rejection, activation, and deactivation evidence.
+- `AdminBootstrap`: durable single-use marker for the trusted first Admin.
 - `Branch` and `Client`: job scope reference data.
 - `Job`: shipment scope and fields, checklist revision, actual preparer/checker/
   filer evidence, stage, and an SQLAlchemy optimistic-lock version. The Phase 1
@@ -263,7 +291,7 @@ All application timestamps represent UTC instants. Historical policy intervals
 use half-open semantics: `valid_from <= timestamp < valid_until`, with a null
 end meaning open-ended. Point-in-time reconstruction combines the latest job
 version, effective role scopes, responsibility/reassignment events, active
-delegations, availability events, stage restrictions, and maker/checker
+delegations, account-state and availability events, stage restrictions, and maker/checker
 separation. If required job-version or responsibility evidence is absent, the
 response sets `complete=false` and explains the limitation instead of
 inventing an eligible actor. Actual version actors are reported separately.
@@ -290,12 +318,11 @@ transactional rechecks, atomic append-only auditing, independent approval for
 sensitive operations, restricted client/parser identities, and consistent
 queue/action predicates.
 
-The planned first-Admin bootstrap is a trusted one-time offline command. It will
-only operate when no Admin grant exists, record a bootstrap audit event, and
-become unavailable afterward. It is documented but remains deferred until the
-independent-approval phase. Phase 2 tests use an explicit trusted bootstrap
-fixture; a real deployment cannot administer grants until the bootstrap command
-is implemented.
+The first-Admin bootstrap is a trusted one-time offline command. It operates
+only when no Admin grant or prior bootstrap marker exists and records its
+account, role-grant, marker, and audit evidence in one transaction. Public
+Admin registration does not exist. Subsequent Admin grants remain reserved for
+the independent sensitive-access approval flow and cannot use the bootstrap.
 
 ## Inspect with DBeaver
 
@@ -305,7 +332,10 @@ PostgreSQL connection with the provider host, database, user, password, and TLS
 requirement. Useful read-only inspection queries are:
 
 ~~~sql
-SELECT id, email, display_name, kind, availability, is_active FROM users ORDER BY email;
+SELECT id, email, display_name, kind, account_status, availability, is_active
+FROM users ORDER BY email;
+SELECT user_id, previous_status, status, effective_at, actor_user_id, reason
+FROM account_state_events ORDER BY effective_at DESC LIMIT 100;
 SELECT r.slug, rp.permission FROM roles r JOIN role_permissions rp ON rp.role_id = r.id
 ORDER BY r.slug, rp.permission;
 SELECT ra.user_id, r.slug, ra.client_id, ra.branch_id, ra.direction, ra.mode,
@@ -324,7 +354,8 @@ FROM user_availability_events ORDER BY effective_at DESC LIMIT 100;
 ~~~
 
 ORM update/delete operations on audit rows, job versions, role-assignment
-events, responsibility events, and availability events are rejected.
+events, responsibility events, availability events, account-state events, and
+the bootstrap marker are rejected.
 Immutability is application-level: a database owner can still alter rows using
 direct SQL. Production deployments should restrict the application's database
 role from destructive history operations; portable database triggers or an
@@ -332,11 +363,10 @@ external tamper-evident archive remain possible defense-in-depth work.
 
 ## Current Limitations
 
-Phase 4 intentionally does **not** yet include employee password registration/
-login and account approval, the employee directory, general permission requests
-or independent Admin-role grant approval, the production first-Admin bootstrap
-command, My Work queue/count endpoints, deterministic seed/load generation,
-benchmarks, frontend source, or the final design document/demo. Finalized
+Phase 5A intentionally does **not** yet include general permission requests or
+independent Admin-role grant approval, absence nomination/transfer, My Work
+queue/count endpoints, deterministic seed/load generation, benchmarks,
+frontend source, or the final design document/demo. Finalized
 submission locks, Admin-approved correction requests, Checker/Filing Officer
 returns, three-state checklist ownership, and notifications remain later
 workflow work; the Phase 4 version/audit design preserves the evidence needed

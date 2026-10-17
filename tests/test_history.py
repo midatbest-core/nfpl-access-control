@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from nfpl_access_control.authorization import ReasonCode
 from nfpl_access_control.authorization.roles import CHECKER_ROLE, MAKER_ROLE
 from nfpl_access_control.models import (
+    AccountStatus,
     AuditEvent,
     EmployeeAvailability,
     Job,
@@ -23,6 +24,7 @@ from nfpl_access_control.models import (
     RoleAssignmentEvent,
     User,
 )
+from nfpl_access_control.services.employees import EmployeeManagementService
 from nfpl_access_control.services.history import HistoryService
 from nfpl_access_control.services.role_management import RoleManagementService
 from nfpl_access_control.services.workflow import WorkflowError, WorkflowService
@@ -453,3 +455,34 @@ def test_stale_version_and_invalid_stage_denials_are_audited(session: Session) -
     ]
     assert all(item.affected_job_version == job.version for item in denials)
     assert len(HistoryService(session).list_versions(job.id)) == 1
+
+
+def test_historical_eligibility_uses_account_state_at_exact_boundary(
+    session: Session,
+) -> None:
+    values = _versioned_setup(session)
+    admin = values["admin"]
+    maker = values["maker"]
+    job = values["job"]
+    assert isinstance(admin, User) and isinstance(maker, User) and isinstance(job, Job)
+    boundary = NOW + timedelta(minutes=5)
+    EmployeeManagementService(session).transition_account(
+        actor=admin,
+        employee=maker,
+        target=AccountStatus.DISABLED,
+        reason="Employment access suspended",
+        now=boundary,
+    )
+
+    before = HistoryService(session).historical_eligibility(
+        job_id=job.id,
+        permission=Permission.JOB_PREPARE,
+        at=boundary - timedelta(microseconds=1),
+    )
+    at_boundary = HistoryService(session).historical_eligibility(
+        job_id=job.id,
+        permission=Permission.JOB_PREPARE,
+        at=boundary,
+    )
+    assert maker.id in {item.user_id for item in before.candidates}
+    assert maker.id not in {item.user_id for item in at_boundary.candidates}

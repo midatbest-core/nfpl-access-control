@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, aliased
 from nfpl_access_control.authorization.decisions import AuthorizationDecision, ReasonCode
 from nfpl_access_control.authorization.roles import ADMIN_ROLE
 from nfpl_access_control.models import (
+    AccountStatus,
     Job,
     JobDirection,
     JobMode,
@@ -163,7 +164,13 @@ class AuthorizationEngine:
     ):
         """Return a correlated Job policy predicate for bounded list queries."""
 
-        if actor is None or not actor.is_active or at.tzinfo is None or at.utcoffset() is None:
+        if (
+            actor is None
+            or not actor.is_active
+            or actor.account_status is not AccountStatus.ACTIVE
+            or at.tzinfo is None
+            or at.utcoffset() is None
+        ):
             return false()
         assignment = aliased(RoleAssignment)
         role_permission = aliased(RolePermission)
@@ -332,7 +339,7 @@ class AuthorizationEngine:
                 ReasonCode.AUTHENTICATION_REQUIRED,
                 "An authenticated actor is required.",
             )
-        if not actor.is_active:
+        if not actor.is_active or actor.account_status is not AccountStatus.ACTIVE:
             return AuthorizationEngine._deny(
                 permission,
                 ReasonCode.ACTOR_INACTIVE,

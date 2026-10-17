@@ -1,7 +1,7 @@
 # NFPL Access Control Service - Test Report
 
 Report date: 2026-10-17  
-Scope: Phases 1 through 4 plus zero-cost deployment amendment
+Scope: Phases 1 through 4 and Phase 5A plus zero-cost deployment amendment
 
 ## Environment
 
@@ -35,7 +35,7 @@ Commands executed:
 ~~~
 
 Additional Python assertions loaded the ASGI app, generated OpenAPI, checked
-all Phase 4 paths, and called the hidden-from-schema `/health` route. Earlier
+all Phase 5A paths, and called the hidden-from-schema `/health` route. Earlier
 Phase 3 verification parsed `render.yaml` and checked its free-plan and health
 configuration.
 
@@ -45,12 +45,12 @@ Final results:
 - Ruff format check: pass
 - Dependency consistency: pass, no broken requirements
 - Render YAML parse/config assertions: pass
-- Pytest: **71 passed, 0 failed, 0 skipped**, 1 third-party deprecation warning
-- Statement coverage: **87%** (2,101 statements, 272 missed)
+- Pytest: **82 passed, 0 failed, 0 skipped**, 1 third-party deprecation warning
+- Statement coverage: **86%** (2,673 statements, 364 missed)
 - Alembic upgrade, full downgrade, and re-upgrade: pass through a disposable
   canonical `DATABASE_URL`
 - Alembic model/schema drift check: pass, no new upgrade operations detected
-- Compile/import/OpenAPI/health checks: pass; 29 documented API paths
+- Compile/import/OpenAPI/health checks: pass; 40 documented API paths
 - Benchmarks: **not run**; benchmark implementation is Phase 6
 
 The warning comes from FastAPI's installed test-client compatibility layer:
@@ -171,6 +171,35 @@ should track it.
 - Revision `20261017_0004` adds affected-version and denial metadata plus
   `job_versions` and `user_availability_events` with history lookup indexes.
 
+## Phase 5A Employee and Authentication Scenarios Verified
+
+- Registration requires a normalized unique email, validated branch, strong
+  password, and name; it creates a Pending staff account with no role.
+- Passwords are stored as unique salted scrypt encodings and never returned.
+  Login issues an eight-hour random bearer token while persisting only its
+  SHA-256 digest.
+- Pending and Disabled accounts cannot log in or use protected endpoints.
+  Admin approval enables login; deactivation atomically revokes all sessions.
+- Logout, legacy revoked/expired credentials, and exact expiry boundaries deny.
+- Database-backed failed-attempt counters impose a temporary lockout without
+  Redis, a scheduler, or a background worker.
+- Non-Admins cannot list or inspect employees. Valid and nonexistent targets
+  remain indistinguishable to unauthorized account-transition callers.
+- Admin directory search/pagination returns role scopes, availability, account
+  status, and pending workload without password or token hashes.
+- Existing role-management tests continue to verify non-Admin denial, scope
+  limits, Admin self-escalation prevention, and blocked direct Admin grants.
+- Self availability changes and Admin account transitions are audited in the
+  same transaction. Account-state events are append-only and historical
+  eligibility applies exact activation/deactivation boundaries.
+- The first-Admin bootstrap is single-use, refuses an existing Admin or marker,
+  stores no plaintext secret, creates its branch/Admin grant atomically, and
+  records immutable bootstrap evidence.
+- Revision `20261017_0005` adds account status, password credentials,
+  account-state events, the one-time bootstrap marker, normalized-email
+  constraint, and employee-directory indexes. A migration test verifies legacy
+  mixed-case email normalization before that constraint is installed.
+
 ## Failed Attempts and Corrections
 
 Results are recorded rather than hidden:
@@ -217,23 +246,30 @@ Results are recorded rather than hidden:
     OpenAPI, but the liveness route is intentionally excluded from the schema.
     A corrected check separately generated OpenAPI and called `/health`; both
     passed.
+12. The first Phase 5A regression run preserved 70 tests and failed only the
+    migration downgrade: SQLite still reflected the new account-status check
+    while rebuilding `users` without that column. The downgrade now drops the
+    check before the column; focused and full migration tests pass.
+13. A post-test security review found account-transition routes loaded a target
+    before checking Admin authority. Authorization now occurs first, and a
+    negative test verifies unauthorized valid/missing targets both return 403.
 
 ## Not Yet Verified
 
 The complete security matrix for original questions Q1-Q14 is not yet claimed.
-Permission requests and independent Admin-role grants, production first-Admin
-bootstrap, work queue list/count parity, employee registration/password login
-and account approval, employee directory, deterministic seed/load generation,
-and scale benchmarks belong to later approved phases. Finalized correction/
+Permission requests and independent Admin-role grants, work queue list/count
+parity, absence nomination/transfer, deterministic seed/load generation, and
+scale benchmarks belong to later approved phases. Finalized correction/
 return locks, three-state Checker-owned checklist behavior, and notifications
 also remain deferred.
 
 No live Render, Railway, Vercel, or Neon deployment was performed, and no real
 PostgreSQL server was available for integration testing. Current remaining risks
-include lack of a PostgreSQL CI target and no production credential
-issuance/first-Admin bootstrap command yet. Append-only enforcement is at the
+include lack of a PostgreSQL CI target and no email-verification or password
+reset/recovery flow (not requested in Phase 5A). Append-only enforcement is at the
 SQLAlchemy application layer; a database owner or direct SQL client can still
 alter history because portable triggers or a tamper-evident archive are not
-implemented. Historical account activation/deactivation events do not exist
-until employee management is implemented. No latency or scale figure has been
-measured or claimed.
+implemented. The database-backed lockout is per known account rather than a
+distributed IP/device rate limiter; this avoids mandatory infrastructure but
+should be supplemented at the reverse proxy in production. No latency or scale
+figure has been measured or claimed.

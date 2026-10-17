@@ -50,6 +50,11 @@ Do not commit credentials, tokens, or local environment files. Provide safe exam
   The unified Admin role remains subject to system invariants.
 - Resolve the actor from authenticated credentials, never mutation-supplied user
   IDs. Missing, inconsistent, expired, revoked, or unsupported policy data denies.
+- Employee registration creates a Pending account without roles. Passwords use
+  scrypt; logins create hashed, expiring, revocable server-side sessions.
+  Disabled accounts fail immediately even when a session was already issued.
+- Account transitions and availability changes are atomic with audit and
+  effective-time history. Public responses never expose password/session hashes.
 - Responsibility is separate from eligibility. Delegation is temporary and
   expiring; reassignment is permanent; both require eligibility and auditing.
 - The actual preparer can never check the same version, including after
@@ -74,21 +79,23 @@ Do not commit credentials, tokens, or local environment files. Provide safe exam
   database roles and the absence of portable trigger/tamper-evidence controls.
 - Work queue list and count queries must use the same policy predicates as
   mutations, bounded keyset pagination, suitable indexes, and no N+1 queries.
-- Self-grants and sensitive self-approval are forbidden. The first Admin will be
-  created by a trusted, single-use offline bootstrap command that only works
-  when no Admin grant exists, records an audit event, and is then disabled.
+- Self-grants and sensitive self-approval are forbidden. The first Admin is
+  created by the trusted, single-use offline bootstrap command, which refuses
+  any existing marker or Admin assignment and records an audit event.
 
 ## Delivery Phases
 
-Implement only the approved phase. Phases 1 through 4 now cover the skeleton,
+Implement only the approved phase. Phases 1 through 4 and Phase 5A cover the skeleton,
 database/Alembic, core models, identity/authentication, scoped RBAC, policy
 explanations, role management, effective grant history, transactional shipment
 workflow, responsibility/reassignment, expiring delegation, employee
 availability, deterministic assignment suggestions, exceptional transitions,
 atomic append-only audit/version history, point-in-time eligibility, and
-client-safe updates. Later phases add admin requests, bootstrap, parser/queues
-and employee account operations; then deterministic seed, scale benchmarks, and
-final documentation. Do not claim unexecuted tests or benchmark figures.
+client-safe updates, employee registration/login, account approval and
+deactivation, Admin directory, availability self-service, and first-Admin
+bootstrap. Later phases add permission requests, parser/queues and remaining
+employee operations; then deterministic seed, scale benchmarks, and final
+documentation. Do not claim unexecuted tests or benchmark figures.
 
 The approved later workflow keeps Maker shipment edits separate from the
 Checker-owned three-state checklist. Submission locks Maker edits; corrections

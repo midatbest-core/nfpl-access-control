@@ -19,6 +19,7 @@ from nfpl_access_control.authorization.roles import (
     CONFIGURABLE_ROLE_PERMISSIONS,
 )
 from nfpl_access_control.models import (
+    AccountStatus,
     AssignmentEventType,
     Permission,
     Role,
@@ -169,7 +170,11 @@ class RoleManagementService:
         )
 
         target = self.session.get(User, target_user_id)
-        if target is None or not target.is_active:
+        if (
+            target is None
+            or not target.is_active
+            or target.account_status is not AccountStatus.ACTIVE
+        ):
             raise RoleManagementValidationError("The target user does not exist or is inactive.")
         role = self.session.scalar(select(Role).where(Role.slug == role_slug))
         if role is None:

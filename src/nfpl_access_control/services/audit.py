@@ -47,6 +47,7 @@ class AuditService:
         after: dict[str, object] | None = None,
         decision: AuthorizationDecision | None = None,
         context: dict[str, object] | None = None,
+        denied: bool | None = None,
     ) -> AuditEvent:
         authorization_context: dict[str, object] = dict(context or {})
         if decision is not None:
@@ -81,7 +82,7 @@ class AuditService:
             after_state=after,
             authorization_context=authorization_context,
             affected_job_version=affected_version,
-            denied=decision is not None and not decision.allowed,
+            denied=(decision is not None and not decision.allowed) if denied is None else denied,
         )
         self.session.add(event)
         return event

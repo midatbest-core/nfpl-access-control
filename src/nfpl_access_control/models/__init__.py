@@ -1,6 +1,7 @@
 """SQLAlchemy domain models."""
 
 from nfpl_access_control.models.enums import (
+    AccountStatus,
     AssignmentEventType,
     EmployeeAvailability,
     ExceptionalAction,
@@ -13,7 +14,13 @@ from nfpl_access_control.models.enums import (
     ResponsibilityType,
     UserKind,
 )
-from nfpl_access_control.models.identity import ApiCredential, User
+from nfpl_access_control.models.identity import (
+    AccountStateEvent,
+    AdminBootstrap,
+    ApiCredential,
+    PasswordCredential,
+    User,
+)
 from nfpl_access_control.models.job import Job
 from nfpl_access_control.models.organization import Branch, Client
 from nfpl_access_control.models.rbac import (
@@ -33,6 +40,9 @@ from nfpl_access_control.models.workflow import (
 )
 
 __all__ = [
+    "AccountStateEvent",
+    "AccountStatus",
+    "AdminBootstrap",
     "ApiCredential",
     "AssignmentEventType",
     "AuditEvent",
@@ -51,6 +61,7 @@ __all__ = [
     "JobVersion",
     "JobStage",
     "Permission",
+    "PasswordCredential",
     "Role",
     "RoleAssignment",
     "RoleAssignmentEvent",

@@ -15,6 +15,7 @@ from nfpl_access_control.authorization import (
     Scope,
 )
 from nfpl_access_control.models import (
+    AccountStatus,
     EmployeeAvailability,
     ExceptionalAction,
     ExceptionalRequestStatus,
@@ -779,7 +780,12 @@ class WorkflowService:
         responsibility: ResponsibilityType,
         at: datetime,
     ) -> None:
-        if candidate is None or not candidate.is_active or candidate.kind is not UserKind.STAFF:
+        if (
+            candidate is None
+            or not candidate.is_active
+            or candidate.account_status is not AccountStatus.ACTIVE
+            or candidate.kind is not UserKind.STAFF
+        ):
             raise WorkflowValidationError("The selected employee is not an active staff identity.")
         if candidate.availability is EmployeeAvailability.ABSENT:
             raise WorkflowValidationError("Absent employees cannot receive new assignments.")
@@ -835,6 +841,7 @@ class WorkflowService:
             .outerjoin(workload, workload.c.user_id == User.id)
             .where(
                 User.is_active.is_(True),
+                User.account_status == AccountStatus.ACTIVE,
                 User.kind == UserKind.STAFF,
                 User.availability == EmployeeAvailability.AVAILABLE,
                 RolePermission.permission == RESPONSIBILITY_PERMISSION[responsibility],

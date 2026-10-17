@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 from alembic.config import Config
@@ -32,6 +33,9 @@ def test_initial_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
         "audit_events",
         "job_versions",
         "user_availability_events",
+        "password_credentials",
+        "account_state_events",
+        "admin_bootstraps",
     }
     assert expected_tables.issubset(set(inspector.get_table_names()))
     assert {
@@ -51,4 +55,39 @@ def test_initial_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
     command.downgrade(config, "base")
     inspector = inspect(engine)
     assert not expected_tables.intersection(inspector.get_table_names())
+    engine.dispose()
+
+
+def test_employee_account_migration_normalizes_existing_email(tmp_path: Path) -> None:
+    database_path = tmp_path / "legacy-email.db"
+    config = Config("alembic.ini")
+    config.attributes["database_url"] = f"sqlite:///{database_path}"
+    command.upgrade(config, "20261017_0004")
+    engine = create_engine(f"sqlite:///{database_path}")
+    now = datetime.now(UTC).isoformat()
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO users "
+            "(email, display_name, kind, is_active, id, created_at, updated_at, availability) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "Legacy.Employee@Example.Test",
+                "Legacy Employee",
+                "staff",
+                1,
+                "legacy-email-user",
+                now,
+                now,
+                "available",
+            ),
+        )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = create_engine(f"sqlite:///{database_path}")
+    with engine.connect() as connection:
+        email = connection.exec_driver_sql(
+            "SELECT email FROM users WHERE id = 'legacy-email-user'"
+        ).scalar_one()
+    assert email == "legacy.employee@example.test"
     engine.dispose()

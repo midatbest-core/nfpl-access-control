@@ -9,6 +9,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from nfpl_access_control.models import (
+    AccountStateEvent,
+    AccountStatus,
     EmployeeAvailability,
     JobDelegation,
     JobDirection,
@@ -273,6 +275,7 @@ class HistoryService:
                     "Responsibility history is incomplete at the requested timestamp."
                 )
         users = self._apply_stage_and_separation(users, permission, stage, snapshot)
+        users = self._apply_account_status(users, at)
         users = self._apply_availability(users, at)
         candidates = tuple(
             HistoricalCandidate(
@@ -312,7 +315,6 @@ class HistoryService:
                 .join(RolePermission, RolePermission.role_id == RoleAssignment.role_id)
                 .where(
                     User.created_at <= at,
-                    User.is_active.is_(True),
                     RolePermission.permission == permission,
                     RoleAssignment.valid_from <= at,
                     or_(RoleAssignment.valid_until.is_(None), RoleAssignment.valid_until > at),
@@ -412,6 +414,38 @@ class HistoryService:
             if value is not EmployeeAvailability.ABSENT:
                 available.append(user)
         return available
+
+    def _apply_account_status(self, users: list[User], at: datetime) -> list[User]:
+        if not users:
+            return []
+        user_ids = [user.id for user in users]
+        events = list(
+            self.session.scalars(
+                select(AccountStateEvent)
+                .where(AccountStateEvent.user_id.in_(user_ids))
+                .order_by(
+                    AccountStateEvent.user_id,
+                    AccountStateEvent.effective_at,
+                    AccountStateEvent.id,
+                )
+            )
+        )
+        by_user: dict[str, list[AccountStateEvent]] = {}
+        for event in events:
+            by_user.setdefault(event.user_id, []).append(event)
+        active: list[User] = []
+        for user in users:
+            history = by_user.get(user.id, [])
+            past = [event for event in history if event.effective_at <= at]
+            if past:
+                status = past[-1].status
+            elif history:
+                status = history[0].previous_status
+            else:
+                status = AccountStatus.ACTIVE if user.is_active else AccountStatus.DISABLED
+            if status is AccountStatus.ACTIVE:
+                active.append(user)
+        return active
 
     @staticmethod
     def _apply_stage_and_separation(

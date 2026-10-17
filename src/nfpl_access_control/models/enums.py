@@ -9,6 +9,12 @@ class UserKind(StrEnum):
     SERVICE = "service"
 
 
+class AccountStatus(StrEnum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    DISABLED = "disabled"
+
+
 class EmployeeAvailability(StrEnum):
     AVAILABLE = "available"
     BUSY = "busy"

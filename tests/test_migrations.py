@@ -37,11 +37,15 @@ def test_initial_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
         "account_state_events",
         "admin_bootstraps",
         "job_edit_requests",
+        "absence_nominations",
+        "absence_nomination_jobs",
+        "notifications",
     }
     assert expected_tables.issubset(set(inspector.get_table_names()))
     assert {
         "ix_jobs_scope_stage_id",
         "ix_jobs_assignee_stage_id",
+        "ix_jobs_archive_stage_updated",
     }.issubset({index["name"] for index in inspector.get_indexes("jobs")})
     with engine.connect() as connection:
         role_count = connection.exec_driver_sql(

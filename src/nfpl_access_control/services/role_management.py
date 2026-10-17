@@ -29,6 +29,7 @@ from nfpl_access_control.models import (
     User,
 )
 from nfpl_access_control.services.audit import AuditService
+from nfpl_access_control.services.notifications import NotificationService
 
 ROLE_SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9-]{2,63}$")
 
@@ -54,6 +55,7 @@ class RoleManagementService:
         self.session = session
         self.authorization = AuthorizationEngine(session)
         self.audit = AuditService(session)
+        self.notifications = NotificationService(session)
 
     def create_role(
         self,
@@ -319,6 +321,15 @@ class RoleManagementService:
             decision=decision,
             before=before,
             after=self._assignment_snapshot(assignment),
+        )
+        self.notifications.create(
+            actor=actor,
+            recipient_user_id=assignment.user_id,
+            event_type="permission_revoked",
+            message="A role assignment was revoked and no longer grants access.",
+            target_path="/v1/employees/me",
+            dedupe_key=f"role-assignment:{assignment.id}:revoked",
+            now=current_time,
         )
         self.session.flush()
         return assignment

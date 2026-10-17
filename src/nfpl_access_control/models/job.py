@@ -28,6 +28,7 @@ class Job(UuidPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint("version >= 1", name="version_positive"),
         Index("ix_jobs_scope_stage_id", "client_id", "branch_id", "stage", "id"),
         Index("ix_jobs_assignee_stage_id", "assignee_id", "stage", "id"),
+        Index("ix_jobs_archive_stage_updated", "archived_at", "stage", "updated_at", "id"),
     )
 
     reference: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
@@ -110,6 +111,11 @@ class Job(UuidPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
     filed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+    archived_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+    archive_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     client = relationship("Client", back_populates="jobs")
     branch = relationship("Branch", back_populates="jobs")

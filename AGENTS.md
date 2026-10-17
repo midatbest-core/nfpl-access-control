@@ -94,7 +94,7 @@ Do not commit credentials, tokens, or local environment files. Provide safe exam
 
 ## Delivery Phases
 
-Implement only the approved phase. Phases 1 through 4 and Phases 5A-5B cover the skeleton,
+Implement only the approved phase. Phases 1 through 4 and Phases 5A-5C cover the skeleton,
 database/Alembic, core models, identity/authentication, scoped RBAC, policy
 explanations, role management, effective grant history, transactional shipment
 workflow, responsibility/reassignment, expiring delegation, employee
@@ -102,13 +102,16 @@ availability, deterministic assignment suggestions, exceptional transitions,
 atomic append-only audit/version history, point-in-time eligibility, and
 client-safe updates, employee registration/login, account approval and
 deactivation, Admin directory, availability self-service, and first-Admin
-bootstrap. Later phases add permission requests, parser/queues and remaining
-employee operations; then deterministic seed, scale benchmarks, and final
+bootstrap, absence nomination and bounded bulk delegation, audited actionable
+notifications, keyset-paginated work queues, and restricted Admin operations
+views. Later phases add permission requests and remaining employee operations;
+then deterministic seed, scale benchmarks, and final
 documentation. Do not claim unexecuted tests or benchmark figures.
 
-Phase 5B emits structured audit actions suitable for later notifications, but
-does not implement a notification center. Notifications and audit events remain
-distinct concepts.
+Phase 5C notifications are database-backed and request-driven. Each created
+notification has an audit event, but ordinary audit events do not imply a
+notification. Job notifications are re-filtered through current authorization;
+delegation expiry and absence remain authorization-time checks with no worker.
 
 ## Zero-Cost Deployment Constraints
 

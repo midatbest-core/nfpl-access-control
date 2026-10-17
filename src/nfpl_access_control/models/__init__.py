@@ -1,6 +1,8 @@
 """SQLAlchemy domain models."""
 
 from nfpl_access_control.models.enums import (
+    AbsenceJobOutcome,
+    AbsenceNominationStatus,
     AccountStatus,
     AssignmentEventType,
     ChecklistItemStatus,
@@ -25,6 +27,11 @@ from nfpl_access_control.models.identity import (
     User,
 )
 from nfpl_access_control.models.job import Job
+from nfpl_access_control.models.operations import (
+    AbsenceNomination,
+    AbsenceNominationJob,
+    Notification,
+)
 from nfpl_access_control.models.organization import Branch, Client
 from nfpl_access_control.models.rbac import (
     Role,
@@ -44,6 +51,10 @@ from nfpl_access_control.models.workflow import (
 )
 
 __all__ = [
+    "AbsenceJobOutcome",
+    "AbsenceNomination",
+    "AbsenceNominationJob",
+    "AbsenceNominationStatus",
     "AccountStateEvent",
     "AccountStatus",
     "AdminBootstrap",
@@ -69,6 +80,7 @@ __all__ = [
     "JobVersion",
     "JobStage",
     "Permission",
+    "Notification",
     "PasswordCredential",
     "Role",
     "RoleAssignment",

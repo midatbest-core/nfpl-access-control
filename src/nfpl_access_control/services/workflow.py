@@ -15,6 +15,8 @@ from nfpl_access_control.authorization import (
     Scope,
 )
 from nfpl_access_control.models import (
+    AbsenceNomination,
+    AbsenceNominationStatus,
     AccountStatus,
     ChecklistItemStatus,
     EditRequestStatus,
@@ -40,7 +42,9 @@ from nfpl_access_control.models import (
     UserAvailabilityEvent,
     UserKind,
 )
+from nfpl_access_control.services.absence import has_effective_absence
 from nfpl_access_control.services.audit import AuditService, job_snapshot
+from nfpl_access_control.services.notifications import NotificationService
 
 RESPONSIBILITY_PERMISSION = {
     ResponsibilityType.MAKER: Permission.JOB_PREPARE,
@@ -104,6 +108,7 @@ class WorkflowService:
         self.session = session
         self.authorization = AuthorizationEngine(session)
         self.audit = AuditService(session)
+        self.notifications = NotificationService(session)
 
     def create_job(
         self,
@@ -272,6 +277,29 @@ class WorkflowService:
             after=job_snapshot(job),
             decision=decision,
         )
+        target = ResponsibilityType.FILING_OFFICER if derived_approval else ResponsibilityType.MAKER
+        self.notifications.notify_responsibility(
+            actor=actor,
+            job=job,
+            responsibility=target,
+            event_type=("checker_approved" if derived_approval else "checker_returned"),
+            message=(
+                "A checked shipment is ready for filing."
+                if derived_approval
+                else "A shipment was returned with correction feedback."
+            ),
+            event_key=f"job:{job.id}:{action}:{job.version}",
+            now=current_time,
+        )
+        if derived_approval:
+            self.notifications.notify_client_viewers(
+                actor=actor,
+                job=job,
+                event_type="shipment_checked",
+                message="Shipment verification is complete.",
+                event_key=f"job:{job.id}:client:checked:{job.version}",
+                now=current_time,
+            )
         self.session.flush()
         return job
 
@@ -349,6 +377,25 @@ class WorkflowService:
             decision=decision,
             context={"return_category": category.value},
         )
+        targets = (
+            (ResponsibilityType.CHECKER,)
+            if category is FilingReturnCategory.CHECKER_FAULT
+            else (
+                (ResponsibilityType.MAKER, ResponsibilityType.CHECKER)
+                if category is FilingReturnCategory.BOTH
+                else (ResponsibilityType.MAKER,)
+            )
+        )
+        for target in targets:
+            self.notifications.notify_responsibility(
+                actor=actor,
+                job=job,
+                responsibility=target,
+                event_type="filing_returned",
+                message=f"Filing returned this shipment for {category.value.replace('_', ' ')}.",
+                event_key=f"job:{job.id}:filing-return:{job.version}:{target.value}",
+                now=current_time,
+            )
         self.session.flush()
         return job
 
@@ -513,6 +560,20 @@ class WorkflowService:
                 "requested_by_user_id": request.requested_by_user_id,
             },
         )
+        self.notifications.create(
+            actor=actor,
+            recipient_user_id=request.requested_by_user_id,
+            event_type=("edit_request_approved" if approved else "edit_request_denied"),
+            message=(
+                "Your shipment edit request was approved."
+                if approved
+                else "Your shipment edit request was denied."
+            ),
+            target_path=f"/v1/jobs/{job.id}",
+            dedupe_key=f"edit-request:{request.id}:decision",
+            job=job,
+            now=current_time,
+        )
         self.session.flush()
         return job
 
@@ -558,6 +619,14 @@ class WorkflowService:
             before=before,
             after=job_snapshot(job),
             decision=decision,
+        )
+        self.notifications.notify_client_viewers(
+            actor=actor,
+            job=job,
+            event_type="shipment_filed",
+            message="Shipment filing is complete.",
+            event_key=f"job:{job.id}:client:filed:{job.version}",
+            now=current_time,
         )
         self.session.flush()
         return job
@@ -624,6 +693,9 @@ class WorkflowService:
                 reason=reason.strip(),
             )
         )
+        # Persist the responsibility first so notification dedupe keys use its
+        # stable identifier rather than a pre-flush None value.
+        self.session.flush()
         self.audit.record(
             actor=actor,
             action=f"job.{event_type.value}",
@@ -637,6 +709,28 @@ class WorkflowService:
                 "new_user_id": target_user_id,
             },
         )
+        if target_user_id is not None and target_user_id != previous_user_id:
+            self.notifications.create(
+                actor=actor,
+                recipient_user_id=target_user_id,
+                event_type="job_assigned",
+                message=f"A {responsibility.value} job was assigned to you.",
+                target_path=f"/v1/jobs/{job.id}",
+                dedupe_key=f"assignment:{record.id}:{record.version}:{target_user_id}",
+                job=job,
+                now=current_time,
+            )
+        if previous_user_id is not None and previous_user_id != target_user_id:
+            self.notifications.create(
+                actor=actor,
+                recipient_user_id=previous_user_id,
+                event_type="responsibility_revoked",
+                message="A job responsibility was removed from your work queue.",
+                target_path="/v1/my-work",
+                dedupe_key=f"assignment:{record.id}:{record.version}:revoked:{previous_user_id}",
+                job=job,
+                now=current_time,
+            )
         self.session.flush()
         return record
 
@@ -655,7 +749,7 @@ class WorkflowService:
         current_time = self._time(now)
         self._aware(valid_from, "valid_from")
         self._aware(valid_until, "valid_until")
-        if valid_until <= valid_from:
+        if valid_until <= valid_from or valid_until <= current_time:
             raise WorkflowValidationError("Delegation end must be later than its start.")
         if not reason.strip():
             raise WorkflowValidationError("A delegation reason is required.")
@@ -666,9 +760,27 @@ class WorkflowService:
             at=current_time,
         )
         self._require(decision, actor, "job.delegation.denied", current_time, job)
-        responsibility_record = self._responsibility(job.id, responsibility)
+        responsibility_record = self.session.scalar(
+            select(JobResponsibility)
+            .where(
+                JobResponsibility.job_id == job.id,
+                JobResponsibility.responsibility == responsibility,
+            )
+            .with_for_update()
+        )
         if responsibility_record is None or responsibility_record.user_id is None:
             raise WorkflowValidationError("The responsibility must be assigned before delegation.")
+        overlap = self.session.scalar(
+            select(JobDelegation.id).where(
+                JobDelegation.job_id == job.id,
+                JobDelegation.responsibility == responsibility,
+                JobDelegation.valid_from < valid_until,
+                JobDelegation.valid_until > valid_from,
+                JobDelegation.revoked_at.is_(None),
+            )
+        )
+        if overlap is not None:
+            raise WorkflowConflictError("An overlapping active delegation already exists.")
         delegate = self.session.get(User, delegate_user_id)
         self._validate_candidate(delegate, job, responsibility, current_time)
         if (
@@ -699,6 +811,7 @@ class WorkflowService:
                 reason=reason.strip(),
             )
         )
+        self.session.flush()
         self.audit.record(
             actor=actor,
             action="job.delegated",
@@ -712,6 +825,16 @@ class WorkflowService:
                 "valid_from": valid_from.isoformat(),
                 "valid_until": valid_until.isoformat(),
             },
+        )
+        self.notifications.create(
+            actor=actor,
+            recipient_user_id=delegate_user_id,
+            event_type="job_delegated",
+            message=f"Temporary {responsibility.value} work was delegated to you.",
+            target_path=f"/v1/jobs/{job.id}",
+            dedupe_key=f"delegation:{delegation.id}:created",
+            job=job,
+            now=current_time,
         )
         self.session.flush()
         return delegation
@@ -760,6 +883,16 @@ class WorkflowService:
             job=job,
             decision=decision,
             context={"delegation_id": delegation.id},
+        )
+        self.notifications.create(
+            actor=actor,
+            recipient_user_id=delegation.delegate_user_id,
+            event_type="delegation_revoked",
+            message="A temporary job delegation was revoked.",
+            target_path="/v1/my-work",
+            dedupe_key=f"delegation:{delegation.id}:revoked",
+            job=job,
+            now=current_time,
         )
         self.session.flush()
         return delegation
@@ -1056,7 +1189,7 @@ class WorkflowService:
         permission: Permission,
         at: datetime,
     ) -> None:
-        if actor.availability is EmployeeAvailability.ABSENT:
+        if has_effective_absence(self.session, actor, at):
             self._deny(
                 actor,
                 job,
@@ -1105,7 +1238,7 @@ class WorkflowService:
             or candidate.kind is not UserKind.STAFF
         ):
             raise WorkflowValidationError("The selected employee is not an active staff identity.")
-        if candidate.availability is EmployeeAvailability.ABSENT:
+        if has_effective_absence(self.session, candidate, at):
             raise WorkflowValidationError("Absent employees cannot receive new assignments.")
         decision = self.authorization.authorize_job(
             candidate, RESPONSIBILITY_PERMISSION[responsibility], job, at=at
@@ -1152,6 +1285,23 @@ class WorkflowService:
             or_(RoleAssignment.all_modes.is_(True), RoleAssignment.mode == job.mode),
         )
         pending = func.coalesce(workload.c.pending, 0)
+        effective_absence = (
+            select(AbsenceNomination.id)
+            .where(
+                AbsenceNomination.requester_user_id == User.id,
+                AbsenceNomination.status.in_(
+                    (AbsenceNominationStatus.APPROVED, AbsenceNominationStatus.REVOKED)
+                ),
+                AbsenceNomination.decided_at <= at,
+                AbsenceNomination.valid_from <= at,
+                AbsenceNomination.valid_until > at,
+                or_(
+                    AbsenceNomination.revoked_at.is_(None),
+                    AbsenceNomination.revoked_at > at,
+                ),
+            )
+            .correlate(User)
+        )
         statement = (
             select(User.id, User.display_name, pending.label("pending"))
             .join(RoleAssignment, RoleAssignment.user_id == User.id)
@@ -1162,6 +1312,7 @@ class WorkflowService:
                 User.account_status == AccountStatus.ACTIVE,
                 User.kind == UserKind.STAFF,
                 User.availability == EmployeeAvailability.AVAILABLE,
+                ~effective_absence.exists(),
                 RolePermission.permission == RESPONSIBILITY_PERMISSION[responsibility],
                 assignment_effective,
             )
@@ -1548,6 +1699,19 @@ class WorkflowService:
             before=before,
             after=job_snapshot(job),
             decision=decision,
+        )
+        self.notifications.notify_responsibility(
+            actor=actor,
+            job=job,
+            responsibility=ResponsibilityType.CHECKER,
+            event_type=("maker_resubmitted" if is_correction else "maker_submitted"),
+            message=(
+                "Corrected shipment details require verification."
+                if is_correction
+                else "A prepared shipment requires verification."
+            ),
+            event_key=f"job:{job.id}:prepared:{job.version}",
+            now=current_time,
         )
         self.session.flush()
         return job

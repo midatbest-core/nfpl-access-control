@@ -13,6 +13,7 @@ from nfpl_access_control.api.routers import (
     history,
     identity,
     jobs,
+    operations,
 )
 from nfpl_access_control.core.config import settings
 
@@ -41,6 +42,7 @@ def create_app(*, cors_allowed_origins: tuple[str, ...] | None = None) -> FastAP
     application.include_router(authorization.router, prefix="/v1")
     application.include_router(admin.router, prefix="/v1")
     application.include_router(jobs.router, prefix="/v1")
+    application.include_router(operations.router, prefix="/v1")
     application.include_router(history.router, prefix="/v1")
     return application
 

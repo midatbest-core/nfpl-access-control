@@ -1,7 +1,7 @@
 # NFPL Access Control Service - Test Report
 
 Report date: 2026-10-17  
-Scope: Phases 1 through 4 and Phases 5A-5B plus zero-cost deployment amendment
+Scope: Phases 1 through 4 and Phases 5A-5C plus zero-cost deployment amendment
 
 ## Environment
 
@@ -35,7 +35,7 @@ Commands executed:
 ~~~
 
 Additional Python assertions loaded the ASGI app, generated OpenAPI, checked
-all Phase 5B paths, and called the hidden-from-schema `/health` route. Earlier
+the Phase 5C operations paths, and called the hidden-from-schema `/health` route. Earlier
 Phase 3 verification parsed `render.yaml` and checked its free-plan and health
 configuration.
 
@@ -45,12 +45,12 @@ Final results:
 - Ruff format check: pass
 - Dependency consistency: pass, no broken requirements
 - Render YAML parse/config assertions: pass
-- Pytest: **93 passed, 0 failed, 0 skipped**, 1 third-party deprecation warning
-- Statement coverage: **86%** (2,950 statements, 420 missed)
+- Pytest: **113 passed, 0 failed, 0 skipped**, 1 third-party deprecation warning
+- Statement coverage: **85%** (3,750 statements, 579 missed)
 - Alembic upgrade, full downgrade, and re-upgrade: pass through a disposable
   canonical `DATABASE_URL`
 - Alembic model/schema drift check: pass, no new upgrade operations detected
-- Import/OpenAPI smoke check: pass; 43 documented API paths
+- Import/OpenAPI smoke check: pass; 56 documented API paths
 - Benchmarks: **not run**; benchmark implementation is Phase 6
 
 The warning comes from FastAPI's installed test-client compatibility layer:
@@ -234,6 +234,43 @@ should track it.
   `job_edit_requests`. Upgrade, downgrade to 0005, re-upgrade, full downgrade,
   and model/schema drift checks passed on a disposable SQLite database.
 
+## Phase 5C Operations Scenarios Verified
+
+- Employee replacement nomination requires active staff identities, an aware
+  bounded interval, a reason, and independent global Admin approval. Eligible
+  open responsibilities become temporary delegations; ineligible or conflicting
+  jobs remain explicitly flagged for Admin review.
+- Per-job Admin overrides recheck current scoped eligibility and separation of
+  duties. Nomination revocation ends every linked delegation immediately and
+  records responsibility events, per-job audit events, and actionable alerts.
+- Nomination creation locks the requesting employee and all delegation paths
+  lock the shared job-responsibility row before checking interval overlap;
+  duplicate active delegation intervals are rejected.
+- Delegation and absence intervals use exact UTC half-open boundaries without a
+  scheduler. During absence the original employee leaves My Work, an eligible
+  delegate enters it, and responsibility returns at expiry or revocation.
+- My Work list/count use one database-filtered authorization union covering
+  scope, responsibility/delegation, account state, absence, stage, archive state,
+  and maker/checker separation. Busy staff retain existing work; role revocation
+  removes it immediately. Composite priority/time/ID keyset pages do not repeat
+  jobs.
+- Assignment, submission, correction, checking, filing, delegation, and client
+  milestones create deduplicated database notifications in the same transaction.
+  Notification creation is audited; rollback removes both records. Reads recheck
+  current job visibility and Client Viewers see only client-safe messages.
+- Historical eligibility applies approved absence and delegation evidence at
+  exact start/expiry boundaries. Concurrent nomination approval produces one
+  winning delegation set and rejects the stale decision through optimistic
+  locking.
+- The Admin dashboard is denied to non-Admins, reports bounded operational
+  counts and urgent requests, lists/searches jobs without N+1 assignee loads,
+  flags reassignment-required jobs, and archives only filed/cancelled jobs with
+  a new immutable job version and atomic audit.
+- Revision `20261017_0007` adds absence nominations/outcomes, delegation
+  provenance, notifications, job archival fields, and supporting queue/dashboard
+  indexes. Upgrade, drift check, full downgrade, and re-upgrade passed on a
+  disposable SQLite database.
+
 ## Failed Attempts and Corrections
 
 Results are recorded rather than hidden:
@@ -299,14 +336,28 @@ Results are recorded rather than hidden:
 16. An intermediate test edit introduced one indentation collection error and
     Ruff found one import-order issue. Both were corrected before final results;
     no passing result was claimed for that run.
+17. The first resumed Phase 5C run preserved all 93 prior tests but Ruff found
+    formatting/import issues in interrupted files. Formatting was applied before
+    behavioral verification.
+18. The first focused Phase 5C test run exposed a test-fixture identity omission;
+    the corrected run then exposed that absence provenance had been placed on a
+    responsibility event instead of `JobDelegation`. The column was moved to the
+    model matching migration `0007`; no security check was weakened.
+19. The first combined smoke command passed lint, format, dependencies, and
+    compilation but its inline Python expression had a PowerShell quoting error.
+    The smoke check was rerun separately and passed with 56 OpenAPI paths and a
+    successful `/health` response.
+20. The keyset pagination lint pass found a missing `and_` import while its
+    focused tests passed. The import and a two-page no-duplicates regression test
+    were added before final verification.
 
 ## Not Yet Verified
 
 The complete security matrix for original questions Q1-Q14 is not yet claimed.
-Permission requests and independent Admin-role grants, work queue list/count
-parity, absence nomination/transfer, deterministic seed/load generation, and
-scale benchmarks belong to later approved phases. Notification delivery remains
-deferred; Phase 5B provides structured audit actions only.
+Permission requests and independent Admin-role grants, deterministic seed/load
+generation, and scale benchmarks belong to later approved phases. External
+notification delivery is outside Phase 5C; in-app notification retrieval is
+request-driven.
 
 No live Render, Railway, Vercel, or Neon deployment was performed, and no real
 PostgreSQL server was available for integration testing. Current remaining risks
@@ -314,7 +365,9 @@ include lack of a PostgreSQL CI target and no email-verification or password
 reset/recovery flow (not requested in Phase 5A). Append-only enforcement is at the
 SQLAlchemy application layer; a database owner or direct SQL client can still
 alter history because portable triggers or a tamper-evident archive are not
-implemented. The database-backed lockout is per known account rather than a
+implemented. PostgreSQL row-lock behavior was designed but not exercised against
+a live PostgreSQL server; local concurrency coverage uses SQLite's single-writer
+behavior plus SQLAlchemy optimistic locking. The database-backed lockout is per known account rather than a
 distributed IP/device rate limiter; this avoids mandatory infrastructure but
 should be supplemented at the reverse proxy in production. No latency or scale
 figure has been measured or claimed.

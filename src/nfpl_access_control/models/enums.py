@@ -60,6 +60,20 @@ class EditRequestStatus(StrEnum):
     CONSUMED = "consumed"
 
 
+class AbsenceNominationStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    REVOKED = "revoked"
+
+
+class AbsenceJobOutcome(StrEnum):
+    DELEGATED = "delegated"
+    INELIGIBLE = "ineligible"
+    CONFLICT = "conflict"
+    OVERRIDDEN = "overridden"
+
+
 class Permission(StrEnum):
     JOB_VIEW = "job:view"
     JOB_CREATE = "job:create"

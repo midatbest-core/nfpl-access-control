@@ -9,6 +9,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from nfpl_access_control.models import (
+    AbsenceNomination,
+    AbsenceNominationStatus,
     AccountStateEvent,
     AccountStatus,
     EmployeeAvailability,
@@ -401,6 +403,23 @@ class HistoryService:
         for event in events:
             by_user.setdefault(event.user_id, []).append(event)
 
+        absent_by_nomination = set(
+            self.session.scalars(
+                select(AbsenceNomination.requester_user_id).where(
+                    AbsenceNomination.requester_user_id.in_(user_ids),
+                    AbsenceNomination.status.in_(
+                        (AbsenceNominationStatus.APPROVED, AbsenceNominationStatus.REVOKED)
+                    ),
+                    AbsenceNomination.decided_at <= at,
+                    AbsenceNomination.valid_from <= at,
+                    AbsenceNomination.valid_until > at,
+                    or_(
+                        AbsenceNomination.revoked_at.is_(None),
+                        AbsenceNomination.revoked_at > at,
+                    ),
+                )
+            )
+        )
         available: list[User] = []
         for user in users:
             history = by_user.get(user.id, [])
@@ -411,7 +430,7 @@ class HistoryService:
                 value = history[0].previous_availability
             else:
                 value = user.availability
-            if value is not EmployeeAvailability.ABSENT:
+            if value is not EmployeeAvailability.ABSENT and user.id not in absent_by_nomination:
                 available.append(user)
         return available
 

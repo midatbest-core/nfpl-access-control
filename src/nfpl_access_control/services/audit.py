@@ -36,6 +36,9 @@ def job_snapshot(job: Job) -> dict[str, object]:
         "prepared_by_user_id": job.prepared_by_user_id,
         "checked_by_user_id": job.checked_by_user_id,
         "filed_by_user_id": job.filed_by_user_id,
+        "archived_at": job.archived_at.isoformat() if job.archived_at else None,
+        "archived_by_user_id": job.archived_by_user_id,
+        "archive_reason": job.archive_reason,
         "version": job.version,
     }
 

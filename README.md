@@ -1,7 +1,7 @@
 # NFPL Access Control Service
 
 Security-focused authorization for NFPL customs-brokerage shipment jobs. This
-repository currently implements **Phases 1 through 4 and Phases 5A-5B**: the project skeleton,
+repository currently implements **Phases 1 through 4 and Phases 5A-5C**: the project skeleton,
 database and authentication foundation, deployment configuration, scoped RBAC,
 central authorization explanations, Admin-controlled grants/revocations, and
 configurable safe roles, plus transactional shipment workflow, responsibility,
@@ -12,6 +12,9 @@ Admin-controlled account lifecycle, and the first-Admin bootstrap.
 Phase 5B adds Maker submission locks, Checker-owned generated checklists,
 job-specific Admin-approved correction requests, Filing returns, mandatory
 correction justification, and fresh independent verification.
+Phase 5C adds approved absence replacement and authorization-bounded bulk
+delegation, audited in-app notifications, an actionable keyset-paginated My
+Work queue, and a restricted Admin operations dashboard.
 
 The original `NFPL_Access_Control_Assignment.pdf` is retained as the source
 brief. The approved expanded requirements govern the phased implementation.
@@ -157,6 +160,23 @@ The available endpoints are:
   scoped Filing Officer or Admin. It omits snapshots and authorization context.
 - `GET /v1/client/jobs/{id}/status|history` and `GET /v1/client/updates`:
   client-scoped, sanitized, read-only status and cursor-based updates.
+- `POST/GET /v1/absence-nominations`: employees nominate a temporary
+  replacement and review their own requests. Global Admin decision/revocation
+  endpoints activate or end eligible job delegations; per-job override handles
+  flagged replacements without broadening the replacement's authority.
+- `GET /v1/notifications`, `GET /v1/notifications/unread-count`, and
+  `POST /v1/notifications/{id}/read`: bounded database-backed notifications.
+  Job-linked items are filtered again through current visibility, and client
+  identities receive only explicitly sanitized items.
+- `GET /v1/my-work`: current actionable responsibilities using the same role,
+  scope, responsibility/delegation, absence, stage, and separation predicates
+  as mutations. Pagination uses an opaque composite keyset cursor; `count`
+  applies the same union query as the list.
+- `GET /v1/admin/dashboard/overview|urgent-requests` and `GET /v1/admin/jobs`:
+  global Admin operations views for stage/availability counts, pending absence,
+  correction and exceptional requests, reassignment flags, and bounded job
+  search. `POST /v1/admin/jobs/{id}/archive` archives only filed/cancelled jobs
+  with optimistic locking, an immutable version, reason, and audit event.
 
 The health endpoint intentionally avoids a database query so platform probes do
 not keep a free PostgreSQL compute awake. Database readiness is established by
@@ -388,13 +408,21 @@ external tamper-evident archive remain possible defense-in-depth work.
 
 ## Current Limitations
 
-Phase 5B intentionally does **not** yet include general permission requests or
-independent Admin-role grant approval, absence nomination/transfer, My Work
-queue/count endpoints, deterministic seed/load generation, benchmarks,
-frontend source, or the final design document/demo. Finalized
-notification delivery and a notification center also remain deferred. Phase 5B
-records structured, traceable workflow events for that later feature but does
-not equate every audit event with a notification.
+Phase 5C intentionally does **not** include general permission requests or
+independent Admin-role grant approval, deterministic seed/load generation,
+benchmarks, frontend source, or the final design document/demo. Notifications
+are in-app and request-driven only; email, push delivery, and a background
+dispatcher are outside the frozen scope. Audit events and notifications remain
+distinct: each created notification is audited, but most audit events do not
+create notifications.
+
+Absence approval currently requires a globally scoped Admin because it may
+transfer responsibilities across multiple clients and branches. A concurrent
+override is serialized with row locks on PostgreSQL and optimistic nomination
+versions; SQLite retains its single-writer development semantics. The Admin
+All Jobs search uses bounded offset pagination, while the action-sensitive My
+Work queue uses keyset pagination. Scale latency remains unmeasured until the
+approved benchmark phase.
 
 SQLite is for local development, not Render/Railway persistence. PostgreSQL has
 not yet been exercised by this local test run. No latency or scale claim is made

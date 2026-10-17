@@ -127,6 +127,9 @@ class JobDelegation(UuidPrimaryKeyMixin, Base):
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+    absence_nomination_id: Mapped[str | None] = mapped_column(
+        ForeignKey("absence_nominations.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
 
     job = relationship("Job", back_populates="delegations")
 

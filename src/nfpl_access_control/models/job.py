@@ -4,12 +4,22 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, CheckConstraint, Enum, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nfpl_access_control.db.base import Base
 from nfpl_access_control.models.base import TimestampMixin, UtcDateTime, UuidPrimaryKeyMixin
-from nfpl_access_control.models.enums import JobDirection, JobMode, JobStage
+from nfpl_access_control.models.enums import FilingReturnCategory, JobDirection, JobMode, JobStage
 
 
 class Job(UuidPrimaryKeyMixin, TimestampMixin, Base):
@@ -69,6 +79,25 @@ class Job(UuidPrimaryKeyMixin, TimestampMixin, Base):
     container_reference: Mapped[str | None] = mapped_column(String(100), nullable=True)
     checklist_data: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     checklist_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    maker_edit_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    maker_correction_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    checker_correction_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    last_return_category: Mapped[FilingReturnCategory | None] = mapped_column(
+        Enum(
+            FilingReturnCategory,
+            native_enum=False,
+            create_constraint=True,
+            name="filing_return_category",
+            length=20,
+            values_callable=lambda values: [value.value for value in values],
+        ),
+        nullable=True,
+    )
+    last_return_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_maker_justification: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_checker_justification: Mapped[str | None] = mapped_column(Text, nullable=True)
     prepared_by_user_id: Mapped[str | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
@@ -88,5 +117,6 @@ class Job(UuidPrimaryKeyMixin, TimestampMixin, Base):
     responsibilities = relationship("JobResponsibility", back_populates="job")
     delegations = relationship("JobDelegation", back_populates="job")
     versions = relationship("JobVersion", order_by="JobVersion.version_number", viewonly=True)
+    edit_requests = relationship("JobEditRequest", back_populates="job")
 
     __mapper_args__ = {"version_id_col": version}

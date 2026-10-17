@@ -457,7 +457,6 @@ class HistoryService:
         valid_stages = {
             Permission.JOB_PREPARE: {
                 JobStage.CONFIRMED,
-                JobStage.PREPARED,
                 JobStage.REOPENED,
             },
             Permission.JOB_UPDATE: {
@@ -471,6 +470,10 @@ class HistoryService:
         }
         allowed_stages = valid_stages.get(permission)
         if allowed_stages is not None and stage not in allowed_stages:
+            return []
+        if permission in {Permission.JOB_PREPARE, Permission.JOB_UPDATE} and snapshot.get(
+            "maker_edit_locked", False
+        ):
             return []
         if permission is Permission.JOB_CHECK:
             preparer_id = snapshot.get("prepared_by_user_id")

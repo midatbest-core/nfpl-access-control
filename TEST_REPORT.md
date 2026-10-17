@@ -1,7 +1,7 @@
 # NFPL Access Control Service - Test Report
 
 Report date: 2026-10-17  
-Scope: Phases 1 through 4 and Phase 5A plus zero-cost deployment amendment
+Scope: Phases 1 through 4 and Phases 5A-5B plus zero-cost deployment amendment
 
 ## Environment
 
@@ -26,7 +26,7 @@ Commands executed:
 .venv\Scripts\ruff.exe check .
 .venv\Scripts\ruff.exe format --check .
 .venv\Scripts\python.exe -m pip check
-.venv\Scripts\pytest.exe --cov=nfpl_access_control --cov-report=term-missing
+.venv\Scripts\pytest.exe --cov=src/nfpl_access_control --cov-report=term-missing -q
 .venv\Scripts\alembic.exe upgrade head
 .venv\Scripts\alembic.exe check
 .venv\Scripts\alembic.exe downgrade base
@@ -35,7 +35,7 @@ Commands executed:
 ~~~
 
 Additional Python assertions loaded the ASGI app, generated OpenAPI, checked
-all Phase 5A paths, and called the hidden-from-schema `/health` route. Earlier
+all Phase 5B paths, and called the hidden-from-schema `/health` route. Earlier
 Phase 3 verification parsed `render.yaml` and checked its free-plan and health
 configuration.
 
@@ -45,12 +45,12 @@ Final results:
 - Ruff format check: pass
 - Dependency consistency: pass, no broken requirements
 - Render YAML parse/config assertions: pass
-- Pytest: **82 passed, 0 failed, 0 skipped**, 1 third-party deprecation warning
-- Statement coverage: **86%** (2,673 statements, 364 missed)
+- Pytest: **93 passed, 0 failed, 0 skipped**, 1 third-party deprecation warning
+- Statement coverage: **86%** (2,950 statements, 420 missed)
 - Alembic upgrade, full downgrade, and re-upgrade: pass through a disposable
   canonical `DATABASE_URL`
 - Alembic model/schema drift check: pass, no new upgrade operations detected
-- Compile/import/OpenAPI/health checks: pass; 40 documented API paths
+- Import/OpenAPI smoke check: pass; 43 documented API paths
 - Benchmarks: **not run**; benchmark implementation is Phase 6
 
 The warning comes from FastAPI's installed test-client compatibility layer:
@@ -200,6 +200,40 @@ should track it.
   constraint, and employee-directory indexes. A migration test verifies legacy
   mixed-case email normalization before that constraint is installed.
 
+## Phase 5B Finalized Workflow Scenarios Verified
+
+- Maker submission generates an Air/FCL/LCL and import/export-specific
+  checklist, locks Maker edits, records the actual preparer, and creates an
+  immutable version. Maker-supplied legacy checklist content is ignored.
+- A locked revision rejects direct Maker edits with `submission_locked`.
+  A reasoned job-specific request requires an independent scoped Admin decision;
+  stale approval and requester self-approval are denied and audited.
+- Approved corrections clear prior verification, unlock only that job, preserve
+  old versions, and require a Maker justification when resubmitted. The request
+  moves to Consumed on resubmission.
+- Checker decisions require every generated item exactly once. Invalid states,
+  missing items, and unjustified Not Applicable decisions fail closed. Any
+  Incomplete item returns actionable feedback and Maker correction routing.
+- Existing maker/checker separation continues to reject the actual preparer,
+  including after promotion or delegation. Checker reapproval after a returned
+  correction requires its own justification.
+- Filing can act only on an independently checked revision. Reasoned returns
+  route Maker fault, Checker fault, or Both correctly; Checker-only returns keep
+  Maker editing locked, while Maker/Both returns require fresh verification.
+- Stale versions, invalid workflow states, missing correction reasons,
+  unauthorized actions, and submitted edits are covered as denial paths.
+- A simulated audit persistence failure followed by transaction rollback leaves
+  the shipment stage, checklist revision, lock, audit, and version unchanged.
+- Historical eligibility uses the recorded Maker lock, and client feeds map new
+  versioned actions to sanitized progress messages without exposing internal
+  reasons or checklist decisions.
+- The generic visible-job endpoint returns a separate safe detail shape to
+  Client Viewers, preventing checklist decisions, correction feedback,
+  descriptions, and employee evidence from leaking across the staff boundary.
+- Revision `20261017_0006` adds job lock/correction/feedback columns and indexed
+  `job_edit_requests`. Upgrade, downgrade to 0005, re-upgrade, full downgrade,
+  and model/schema drift checks passed on a disposable SQLite database.
+
 ## Failed Attempts and Corrections
 
 Results are recorded rather than hidden:
@@ -253,15 +287,26 @@ Results are recorded rather than hidden:
 13. A post-test security review found account-transition routes loaded a target
     before checking Admin authority. Authorization now occurs first, and a
     negative test verifies unauthorized valid/missing targets both return 403.
+14. The first Phase 5B focused regression run had 23 passes and 2 expected
+    policy mismatches: the Phase 3 test allowed direct post-check Maker edits,
+    and one history assertion expected the older rejection action name. The
+    superseded edit expectation was replaced with Admin-approved correction
+    coverage; the legacy rejection event name remains compatible.
+15. The first full Phase 5B run had 85 passes and 1 failure because historical
+    eligibility still expected a submitted Maker to remain actionable. The
+    reconstruction now applies the recorded submission lock, and the separate
+    availability-boundary assertion uses visibility eligibility.
+16. An intermediate test edit introduced one indentation collection error and
+    Ruff found one import-order issue. Both were corrected before final results;
+    no passing result was claimed for that run.
 
 ## Not Yet Verified
 
 The complete security matrix for original questions Q1-Q14 is not yet claimed.
 Permission requests and independent Admin-role grants, work queue list/count
 parity, absence nomination/transfer, deterministic seed/load generation, and
-scale benchmarks belong to later approved phases. Finalized correction/
-return locks, three-state Checker-owned checklist behavior, and notifications
-also remain deferred.
+scale benchmarks belong to later approved phases. Notification delivery remains
+deferred; Phase 5B provides structured audit actions only.
 
 No live Render, Railway, Vercel, or Neon deployment was performed, and no real
 PostgreSQL server was available for integration testing. Current remaining risks

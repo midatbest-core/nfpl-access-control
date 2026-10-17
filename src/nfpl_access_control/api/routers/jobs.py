@@ -10,17 +10,24 @@ from nfpl_access_control.models import (
     ExceptionalTransitionRequest,
     Job,
     JobDelegation,
+    JobEditRequest,
     Permission,
     User,
+    UserKind,
 )
 from nfpl_access_control.schemas.workflow import (
     AssignmentRequest,
     AvailabilityRequest,
     CheckRequest,
+    ClientJobDetailResponse,
     DelegationRequest,
     DelegationResponse,
+    EditRequestCreate,
+    EditRequestDecision,
+    EditRequestResponse,
     ExceptionalTransitionCreateRequest,
     ExceptionalTransitionResponse,
+    FilingReturnRequest,
     JobCreateRequest,
     JobResponse,
     JobUpdateRequest,
@@ -55,15 +62,13 @@ def _handle(error: Exception, session: DatabaseSession) -> None:
     if isinstance(error, WorkflowError):
         # Authorization denials are append-only records and occur before mutation.
         session.commit()
-        code = (
-            409
-            if error.decision.reason_code.value
-            in {
-                "invalid_stage",
-                "stale_version",
-            }
-            else 403
-        )
+        reason_code = error.decision.reason_code.value
+        if reason_code in {"invalid_stage", "stale_version", "submission_locked"}:
+            code = 409
+        elif reason_code in {"invalid_checklist", "justification_required"}:
+            code = 422
+        else:
+            code = 403
         raise HTTPException(
             status_code=code,
             detail={
@@ -92,9 +97,14 @@ def create_job(
         _handle(error, session)
 
 
-@router.get("/jobs/{job_id}", response_model=JobResponse)
-def get_job(job_id: str, actor: CurrentActor, session: DatabaseSession) -> JobResponse:
-    return JobResponse.from_job(_job_or_hidden(session, actor, job_id))
+@router.get("/jobs/{job_id}", response_model=JobResponse | ClientJobDetailResponse)
+def get_job(
+    job_id: str, actor: CurrentActor, session: DatabaseSession
+) -> JobResponse | ClientJobDetailResponse:
+    job = _job_or_hidden(session, actor, job_id)
+    if actor.kind is UserKind.CLIENT:
+        return ClientJobDetailResponse.from_job(job)
+    return JobResponse.from_job(job)
 
 
 @router.patch("/jobs/{job_id}", response_model=JobResponse)
@@ -150,6 +160,84 @@ def file_job(
         session.commit()
         return response
     except (WorkflowError, WorkflowValidationError, StaleDataError) as error:
+        _handle(error, session)
+
+
+@router.post("/jobs/{job_id}/return-for-correction", response_model=JobResponse)
+def return_job_for_correction(
+    job_id: str,
+    request: FilingReturnRequest,
+    actor: CurrentActor,
+    session: DatabaseSession,
+) -> JobResponse:
+    job = _job_or_hidden(session, actor, job_id)
+    try:
+        updated = WorkflowService(session).return_for_correction(
+            actor=actor, job=job, **request.model_dump()
+        )
+        response = JobResponse.from_job(updated)
+        session.commit()
+        return response
+    except (WorkflowError, WorkflowValidationError, StaleDataError) as error:
+        _handle(error, session)
+
+
+@router.post(
+    "/jobs/{job_id}/edit-requests",
+    response_model=EditRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def request_job_edit(
+    job_id: str,
+    request: EditRequestCreate,
+    actor: CurrentActor,
+    session: DatabaseSession,
+) -> EditRequestResponse:
+    job = _job_or_hidden(session, actor, job_id)
+    try:
+        record = WorkflowService(session).request_edit(actor=actor, job=job, reason=request.reason)
+        response = EditRequestResponse.model_validate(record)
+        session.commit()
+        return response
+    except (WorkflowError, WorkflowValidationError, WorkflowConflictError) as error:
+        _handle(error, session)
+
+
+@router.post("/admin/edit-requests/{request_id}/decision", response_model=JobResponse)
+def decide_job_edit_request(
+    request_id: str,
+    request: EditRequestDecision,
+    actor: CurrentActor,
+    session: DatabaseSession,
+) -> JobResponse:
+    edit_request = session.get(JobEditRequest, request_id)
+    if edit_request is None:
+        raise HTTPException(status_code=404, detail="Edit request not found")
+    try:
+        job = WorkflowService(session).decide_edit_request(
+            actor=actor, request=edit_request, **request.model_dump()
+        )
+        response = JobResponse.from_job(job)
+        session.commit()
+        return response
+    except WorkflowError as error:
+        if error.decision.reason_code.value in {
+            "admin_required",
+            "client_scope_mismatch",
+            "branch_scope_mismatch",
+            "direction_scope_mismatch",
+            "mode_scope_mismatch",
+            "missing_permission",
+            "access_not_yet_effective",
+            "access_expired",
+            "access_revoked",
+        }:
+            session.commit()
+            raise HTTPException(
+                status_code=404, detail="Edit request not found or not visible"
+            ) from error
+        _handle(error, session)
+    except (WorkflowValidationError, WorkflowConflictError, StaleDataError) as error:
         _handle(error, session)
 
 

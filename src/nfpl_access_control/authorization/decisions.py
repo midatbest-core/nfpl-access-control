@@ -36,6 +36,9 @@ class ReasonCode(StrEnum):
     INDEPENDENT_APPROVAL_REQUIRED = "independent_approval_required"
     SELF_APPROVAL_FORBIDDEN = "self_approval_forbidden"
     PROTECTED_FIELD = "protected_field"
+    SUBMISSION_LOCKED = "submission_locked"
+    INVALID_CHECKLIST = "invalid_checklist"
+    JUSTIFICATION_REQUIRED = "justification_required"
 
 
 @dataclass(frozen=True, slots=True)

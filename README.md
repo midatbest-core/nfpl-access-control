@@ -1,7 +1,7 @@
 # NFPL Access Control Service
 
 Security-focused authorization for NFPL customs-brokerage shipment jobs. This
-repository currently implements **Phases 1 through 4 and Phase 5A**: the project skeleton,
+repository currently implements **Phases 1 through 4 and Phases 5A-5B**: the project skeleton,
 database and authentication foundation, deployment configuration, scoped RBAC,
 central authorization explanations, Admin-controlled grants/revocations, and
 configurable safe roles, plus transactional shipment workflow, responsibility,
@@ -9,6 +9,9 @@ delegation, deterministic assignment suggestions, append-only audit history,
 immutable shipment versions, historical eligibility reconstruction,
 client-safe incremental updates, employee registration/password login,
 Admin-controlled account lifecycle, and the first-Admin bootstrap.
+Phase 5B adds Maker submission locks, Checker-owned generated checklists,
+job-specific Admin-approved correction requests, Filing returns, mandatory
+correction justification, and fresh independent verification.
 
 The original `NFPL_Access_Control_Assignment.pdf` is retained as the source
 brief. The approved expanded requirements govern the phased implementation.
@@ -124,9 +127,17 @@ The available endpoints are:
 - `POST /v1/admin/role-assignments/{id}/revoke`: immediately revokes an
   assignment and appends a revocation event.
 - `POST /v1/jobs` and `GET/PATCH /v1/jobs/{id}`: create, view, and edit a
-  shipment using the authenticated actor and scoped policy.
-- `POST /v1/jobs/{id}/prepare|check|file|cancel`: guarded workflow actions
-  with an expected job version.
+  shipment using the authenticated actor and scoped policy. Client Viewer GETs
+  use a separate safe response that omits descriptions, checklist decisions,
+  employee identities, return feedback, and correction justifications.
+- `POST /v1/jobs/{id}/prepare|check|file|cancel`: guarded, versioned workflow
+  actions. Maker-supplied `checklist_data` is retained only for request
+  compatibility and is ignored; the server generates the Checker checklist.
+- `POST /v1/jobs/{id}/return-for-correction`: Filing Officer return with a
+  required Maker fault, Checker fault, or Both category and explanation.
+- `POST /v1/jobs/{id}/edit-requests` and
+  `POST /v1/admin/edit-requests/{id}/decision`: job-specific Maker correction
+  request and independent Admin approval/denial.
 - `PUT /v1/admin/jobs/{id}/assignment`: assign, reassign, or unassign a
   Maker, Checker, or Filing Officer.
 - `GET /v1/admin/jobs/{id}/assignment-suggestions`: deterministic,
@@ -246,8 +257,9 @@ reserved for the later independent-approval flow.
   rejection, activation, and deactivation evidence.
 - `AdminBootstrap`: durable single-use marker for the trusted first Admin.
 - `Branch` and `Client`: job scope reference data.
-- `Job`: shipment scope and fields, checklist revision, actual preparer/checker/
-  filer evidence, stage, and an SQLAlchemy optimistic-lock version. The Phase 1
+- `Job`: shipment scope and fields, generated checklist revision, Maker edit
+  lock, correction-routing flags and feedback, actual preparer/checker/filer
+  evidence, stage, and an SQLAlchemy optimistic-lock version. The Phase 1
   generic assignee remains for migration compatibility but is not the workflow
   responsibility source.
 - `Role` and `RolePermission`: system or configurable role composition.
@@ -259,6 +271,8 @@ reserved for the later independent-approval flow.
 - `JobDelegation`: reasoned UTC half-open delegation with early revocation.
 - `ExceptionalTransitionRequest`: independently approved filed cancellation
   or reopening.
+- `JobEditRequest`: job-specific Pending/Approved/Denied/Consumed correction
+  request with requester, independent decision actor, reasons, and UTC times.
 - `AuditEvent`: action, actor, time, reason, authorization context, and job
   before/after snapshots, affected version, and denial marker stored atomically
   with mutations.
@@ -267,13 +281,21 @@ reserved for the later independent-approval flow.
 - `UserAvailabilityEvent`: effective-time evidence used when reconstructing
   historical action eligibility.
 
-Jobs follow `confirmed -> prepared -> checked -> filed`. A Checker rejection
-returns a job to `confirmed`. A relevant edit after checking returns it to
-`prepared`, clears the prior check, increments the checklist revision, and
-requires fresh independent verification. Reasoned Admin cancellation is allowed
-for unfinished jobs. Filed cancellation and reopening from `filed` or
-`cancelled` require a pending exceptional request and approval by a different
-scoped Admin. Reopened jobs return through preparation and checking.
+Jobs follow `confirmed -> prepared -> checked -> filed`. Maker submission
+generates and locks a mode/direction-specific checklist. The Checker records
+Complete, Incomplete, or Not Applicable for every item; Not Applicable needs a
+written justification and any Incomplete item returns actionable feedback to
+the Maker. The actual preparer cannot verify the revision.
+
+A locked Maker can edit only after a job-specific request is approved by a
+different scoped Admin, or after a Checker/Filing return routes work to the
+Maker. Correction resubmission requires justification, creates immutable new
+versions, and requires fresh checking. A Filing Officer can return an approved
+revision for Maker fault, Checker fault, or Both with a written explanation;
+Checker-only returns remain Maker-locked and permit checklist reconsideration.
+Reasoned Admin cancellation is allowed for unfinished jobs. Filed cancellation
+and reopening from `filed` or `cancelled` require the established independent
+exceptional flow; reopening unlocks correction work and never rewrites history.
 
 Role eligibility never creates responsibility automatically. Maker, Checker,
 and Filing actions require both current scoped permission and current assignment
@@ -345,6 +367,9 @@ SELECT id, reference, client_id, branch_id, direction, mode, stage, version
 FROM jobs ORDER BY created_at DESC LIMIT 100;
 SELECT job_id, responsibility, user_id, assigned_at
 FROM job_responsibilities ORDER BY job_id, responsibility;
+SELECT job_id, status, requested_by_user_id, requested_at, decided_by_user_id,
+       decided_at, reason, decision_reason
+FROM job_edit_requests ORDER BY requested_at DESC LIMIT 100;
 SELECT job_id, action, actor_user_id, occurred_at, reason
 FROM audit_events ORDER BY occurred_at DESC LIMIT 100;
 SELECT job_id, version_number, recorded_at, actor_user_id, action, reason, snapshot
@@ -363,14 +388,13 @@ external tamper-evident archive remain possible defense-in-depth work.
 
 ## Current Limitations
 
-Phase 5A intentionally does **not** yet include general permission requests or
+Phase 5B intentionally does **not** yet include general permission requests or
 independent Admin-role grant approval, absence nomination/transfer, My Work
 queue/count endpoints, deterministic seed/load generation, benchmarks,
 frontend source, or the final design document/demo. Finalized
-submission locks, Admin-approved correction requests, Checker/Filing Officer
-returns, three-state checklist ownership, and notifications remain later
-workflow work; the Phase 4 version/audit design preserves the evidence needed
-for them without implementing them prematurely.
+notification delivery and a notification center also remain deferred. Phase 5B
+records structured, traceable workflow events for that later feature but does
+not equate every audit event with a notification.
 
 SQLite is for local development, not Render/Railway persistence. PostgreSQL has
 not yet been exercised by this local test run. No latency or scale claim is made

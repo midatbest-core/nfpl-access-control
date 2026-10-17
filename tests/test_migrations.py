@@ -36,6 +36,7 @@ def test_initial_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
         "password_credentials",
         "account_state_events",
         "admin_bootstraps",
+        "job_edit_requests",
     }
     assert expected_tables.issubset(set(inspector.get_table_names()))
     assert {

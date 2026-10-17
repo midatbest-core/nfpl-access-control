@@ -59,6 +59,15 @@ Do not commit credentials, tokens, or local environment files. Provide safe exam
   expiring; reassignment is permanent; both require eligibility and auditing.
 - The actual preparer can never check the same version, including after
   promotion, delegation, or Admin access. Relevant edits invalidate checking.
+- Maker submission locks shipment editing. A correction requires a job-specific
+  independently approved Admin edit request or a Checker/Filing return. Maker
+  and Checker correction resubmissions require recorded justification.
+- Checklist definitions are generated from the immutable job mode/direction and
+  are owned by the Checker. Complete, Incomplete, and justified Not Applicable
+  are the only decisions; any Incomplete item routes work back to the Maker.
+- Filing Officers may file an independently checked revision or return it with
+  a written Maker/Checker/Both category. Maker changes always require a fresh
+  independent check; filed work still uses the exceptional reopen process.
 - Access changes apply to subsequent operations immediately. Recheck policy and
   state inside each mutation transaction and use optimistic job versions.
 - Filed cancel/reopen is an exceptional Admin-authorized flow with a reason,
@@ -85,7 +94,7 @@ Do not commit credentials, tokens, or local environment files. Provide safe exam
 
 ## Delivery Phases
 
-Implement only the approved phase. Phases 1 through 4 and Phase 5A cover the skeleton,
+Implement only the approved phase. Phases 1 through 4 and Phases 5A-5B cover the skeleton,
 database/Alembic, core models, identity/authentication, scoped RBAC, policy
 explanations, role management, effective grant history, transactional shipment
 workflow, responsibility/reassignment, expiring delegation, employee
@@ -97,13 +106,9 @@ bootstrap. Later phases add permission requests, parser/queues and remaining
 employee operations; then deterministic seed, scale benchmarks, and final
 documentation. Do not claim unexecuted tests or benchmark figures.
 
-The approved later workflow keeps Maker shipment edits separate from the
-Checker-owned three-state checklist. Submission locks Maker edits; corrections
-require an approved request or return, every correction/resubmission needs a
-justification, Filing Officers may return work, and relevant changes require
-fresh independent verification. Notifications and audits remain distinct. Do
-not implement these later-phase behaviors without approval, but preserve their
-version and audit compatibility.
+Phase 5B emits structured audit actions suitable for later notifications, but
+does not implement a notification center. Notifications and audit events remain
+distinct concepts.
 
 ## Zero-Cost Deployment Constraints
 

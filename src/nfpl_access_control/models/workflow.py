@@ -22,6 +22,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from nfpl_access_control.db.base import Base
 from nfpl_access_control.models.base import UtcDateTime, UuidPrimaryKeyMixin, utc_now
 from nfpl_access_control.models.enums import (
+    EditRequestStatus,
     EmployeeAvailability,
     ExceptionalAction,
     ExceptionalRequestStatus,
@@ -152,6 +153,29 @@ class ExceptionalTransitionRequest(UuidPrimaryKeyMixin, Base):
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
     decided_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+
+
+class JobEditRequest(UuidPrimaryKeyMixin, Base):
+    __tablename__ = "job_edit_requests"
+    __table_args__ = (Index("ix_job_edit_requests_job_status", "job_id", "status", "requested_at"),)
+
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=False)
+    status: Mapped[EditRequestStatus] = mapped_column(
+        enum_column(EditRequestStatus, "edit_request_status", 16), nullable=False
+    )
+    requested_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    requested_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=utc_now, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    decided_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+    decision_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+
+    job = relationship("Job", back_populates="edit_requests")
 
 
 class AuditEvent(UuidPrimaryKeyMixin, Base):

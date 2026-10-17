@@ -16,13 +16,17 @@ from nfpl_access_control.authorization import (
 )
 from nfpl_access_control.models import (
     AccountStatus,
+    ChecklistItemStatus,
+    EditRequestStatus,
     EmployeeAvailability,
     ExceptionalAction,
     ExceptionalRequestStatus,
     ExceptionalTransitionRequest,
+    FilingReturnCategory,
     Job,
     JobDelegation,
     JobDirection,
+    JobEditRequest,
     JobMode,
     JobResponsibility,
     JobResponsibilityEvent,
@@ -49,6 +53,26 @@ OPEN_STAGES = (
     JobStage.CHECKED,
     JobStage.REOPENED,
 )
+
+CHECKLIST_TEMPLATES: dict[JobMode, tuple[tuple[str, str], ...]] = {
+    JobMode.AIR: (
+        ("commercial_invoice", "Commercial invoice matches shipment details"),
+        ("packing_list", "Packing list is present and consistent"),
+        ("air_waybill", "Air waybill details are verified"),
+    ),
+    JobMode.FCL: (
+        ("commercial_invoice", "Commercial invoice matches shipment details"),
+        ("packing_list", "Packing list is present and consistent"),
+        ("bill_of_lading", "Bill of lading details are verified"),
+        ("container_reference", "Container and seal references are verified"),
+    ),
+    JobMode.LCL: (
+        ("commercial_invoice", "Commercial invoice matches shipment details"),
+        ("packing_list", "Packing list is present and consistent"),
+        ("house_bill_of_lading", "House bill of lading is verified"),
+        ("consolidation_reference", "Consolidation reference is verified"),
+    ),
+}
 
 
 class WorkflowError(Exception):
@@ -130,9 +154,11 @@ class WorkflowService:
         *,
         actor: User,
         job: Job,
-        approved: bool,
+        approved: bool | None,
         reason: str,
         expected_version: int,
+        checklist_items: list[dict[str, object]] | None = None,
+        justification: str = "",
         now: datetime | None = None,
     ) -> Job:
         current_time = self._time(now)
@@ -174,29 +200,318 @@ class WorkflowService:
                 "job.check.denied",
                 current_time,
             )
-        if not approved and not reason.strip():
-            raise WorkflowValidationError("A rejection reason is required.")
+        decisions = self._checklist_decisions(
+            actor=actor,
+            job=job,
+            checklist_items=checklist_items,
+            legacy_approved=approved,
+            at=current_time,
+        )
+        has_incomplete = any(
+            item["status"] == ChecklistItemStatus.INCOMPLETE.value for item in decisions
+        )
+        derived_approval = not has_incomplete
+        if approved is not None and checklist_items is not None and approved != derived_approval:
+            self._checklist_error(
+                actor,
+                job,
+                "The approval flag conflicts with the checklist item decisions.",
+                current_time,
+            )
+        if has_incomplete and not reason.strip():
+            self._checklist_error(
+                actor,
+                job,
+                "Actionable feedback is required when a checklist item is incomplete.",
+                current_time,
+            )
+        if job.checker_correction_required and not justification.strip():
+            self._deny(
+                actor,
+                job,
+                Permission.JOB_CHECK,
+                ReasonCode.JUSTIFICATION_REQUIRED,
+                "A justification is required when reconsidering or reapproving a checklist.",
+                "job.check.denied",
+                current_time,
+            )
         before = job_snapshot(job)
-        if approved:
+        job.checklist_data = {
+            "revision": job.checklist_revision,
+            "mode": job.mode.value,
+            "direction": job.direction.value,
+            "items": decisions,
+        }
+        job.last_checker_justification = justification.strip() or reason.strip() or None
+        if derived_approval:
             job.stage = JobStage.CHECKED
             job.checked_by_user_id = actor.id
             job.checked_at = current_time
-            action = "job.checked"
+            action = "job.rechecked" if job.checker_correction_required else "job.checked"
+            job.checker_correction_required = False
+            job.last_return_category = None
+            job.last_return_reason = None
         else:
             job.stage = JobStage.CONFIRMED
             job.checked_by_user_id = None
             job.checked_at = None
-            action = "job.check_rejected"
+            job.maker_edit_locked = False
+            job.maker_correction_required = True
+            job.checker_correction_required = False
+            job.last_return_category = FilingReturnCategory.MAKER_FAULT
+            job.last_return_reason = reason.strip()
+            action = "job.check_rejected" if checklist_items is None else "job.checklist_returned"
         self.session.flush()
         self.audit.record(
             actor=actor,
             action=action,
-            reason=reason.strip() or "Checklist independently verified.",
+            reason=(reason.strip() or justification.strip() or "Checklist independently verified."),
             occurred_at=current_time,
             job=job,
             before=before,
             after=job_snapshot(job),
             decision=decision,
+        )
+        self.session.flush()
+        return job
+
+    def return_for_correction(
+        self,
+        *,
+        actor: User,
+        job: Job,
+        category: FilingReturnCategory,
+        reason: str,
+        expected_version: int,
+        now: datetime | None = None,
+    ) -> Job:
+        current_time = self._time(now)
+        decision = self.authorization.authorize_job(
+            actor, Permission.JOB_FILE, job, at=current_time
+        )
+        self._require(decision, actor, "job.filing_return.denied", current_time, job)
+        self._require_responsibility(
+            actor, job, ResponsibilityType.FILING_OFFICER, Permission.JOB_FILE, current_time
+        )
+        self._require_version(
+            actor,
+            job,
+            expected_version,
+            Permission.JOB_FILE,
+            current_time,
+            "job.filing_return.denied",
+        )
+        if job.stage is not JobStage.CHECKED or job.checked_by_user_id is None:
+            self._stage_error(
+                actor,
+                job,
+                Permission.JOB_FILE,
+                "Only an independently checked job can be returned by Filing.",
+                "job.filing_return.denied",
+                current_time,
+            )
+        if not reason.strip():
+            self._deny(
+                actor,
+                job,
+                Permission.JOB_FILE,
+                ReasonCode.JUSTIFICATION_REQUIRED,
+                "A written explanation is required when returning a job.",
+                "job.filing_return.denied",
+                current_time,
+            )
+        before = job_snapshot(job)
+        job.last_return_category = category
+        job.last_return_reason = reason.strip()
+        job.checked_by_user_id = None
+        job.checked_at = None
+        job.filed_by_user_id = None
+        job.filed_at = None
+        if category is FilingReturnCategory.CHECKER_FAULT:
+            job.stage = JobStage.PREPARED
+            job.maker_edit_locked = True
+            job.maker_correction_required = False
+            job.checker_correction_required = True
+        else:
+            job.stage = JobStage.CONFIRMED
+            job.maker_edit_locked = False
+            job.maker_correction_required = True
+            job.checker_correction_required = True
+        self.session.flush()
+        self.audit.record(
+            actor=actor,
+            action="job.returned_for_correction",
+            reason=reason.strip(),
+            occurred_at=current_time,
+            job=job,
+            before=before,
+            after=job_snapshot(job),
+            decision=decision,
+            context={"return_category": category.value},
+        )
+        self.session.flush()
+        return job
+
+    def request_edit(
+        self,
+        *,
+        actor: User,
+        job: Job,
+        reason: str,
+        now: datetime | None = None,
+    ) -> JobEditRequest:
+        current_time = self._time(now)
+        decision = self.authorization.authorize_job(
+            actor, Permission.JOB_PREPARE, job, at=current_time
+        )
+        self._require(decision, actor, "job.edit_request.denied", current_time, job)
+        self._require_responsibility(
+            actor, job, ResponsibilityType.MAKER, Permission.JOB_PREPARE, current_time
+        )
+        # Serialize competing requests for the same job on PostgreSQL. SQLite
+        # safely ignores FOR UPDATE while retaining its single-writer behavior.
+        self.session.execute(select(Job.id).where(Job.id == job.id).with_for_update()).scalar_one()
+        if not reason.strip():
+            self._deny(
+                actor,
+                job,
+                Permission.JOB_PREPARE,
+                ReasonCode.JUSTIFICATION_REQUIRED,
+                "An edit request requires a written justification.",
+                "job.edit_request.denied",
+                current_time,
+            )
+        if not job.maker_edit_locked or job.stage not in {JobStage.PREPARED, JobStage.CHECKED}:
+            self._stage_error(
+                actor,
+                job,
+                Permission.JOB_PREPARE,
+                "An edit request is only available for a submitted, locked job.",
+                "job.edit_request.denied",
+                current_time,
+            )
+        pending = self.session.scalar(
+            select(JobEditRequest.id).where(
+                JobEditRequest.job_id == job.id,
+                JobEditRequest.status == EditRequestStatus.PENDING,
+            )
+        )
+        if pending is not None:
+            raise WorkflowConflictError("A job-specific edit request is already pending.")
+        request = JobEditRequest(
+            job_id=job.id,
+            status=EditRequestStatus.PENDING,
+            requested_by_user_id=actor.id,
+            requested_at=current_time,
+            reason=reason.strip(),
+        )
+        self.session.add(request)
+        self.audit.record(
+            actor=actor,
+            action="job.edit_requested",
+            reason=reason.strip(),
+            occurred_at=current_time,
+            job=job,
+            decision=decision,
+        )
+        self.session.flush()
+        return request
+
+    def decide_edit_request(
+        self,
+        *,
+        actor: User,
+        request: JobEditRequest,
+        approved: bool,
+        reason: str,
+        expected_version: int,
+        now: datetime | None = None,
+    ) -> Job:
+        current_time = self._time(now)
+        locked_request = self.session.scalar(
+            select(JobEditRequest).where(JobEditRequest.id == request.id).with_for_update()
+        )
+        if locked_request is None:
+            raise WorkflowValidationError("The edit request no longer exists.")
+        request = locked_request
+        job = self.session.get(Job, request.job_id)
+        if job is None:
+            raise WorkflowValidationError("The edit request has no job.")
+        decision = self.authorization.authorize_admin(
+            actor,
+            Permission.JOB_UPDATE,
+            requested_scope=Scope.for_job(job),
+            at=current_time,
+        )
+        self._require(decision, actor, "job.edit_request_decision.denied", current_time, job)
+        if actor.id == request.requested_by_user_id:
+            self._deny(
+                actor,
+                job,
+                Permission.JOB_UPDATE,
+                ReasonCode.SELF_APPROVAL_FORBIDDEN,
+                "The employee requesting an edit cannot approve their own request.",
+                "job.edit_request_decision.denied",
+                current_time,
+            )
+        if request.status is not EditRequestStatus.PENDING:
+            raise WorkflowConflictError("The edit request is no longer pending.")
+        if not reason.strip():
+            self._deny(
+                actor,
+                job,
+                Permission.JOB_UPDATE,
+                ReasonCode.JUSTIFICATION_REQUIRED,
+                "An Admin decision requires a written reason.",
+                "job.edit_request_decision.denied",
+                current_time,
+            )
+        self._require_version(
+            actor,
+            job,
+            expected_version,
+            Permission.JOB_UPDATE,
+            current_time,
+            "job.edit_request_decision.denied",
+        )
+        if job.stage in {JobStage.FILED, JobStage.CANCELLED}:
+            self._stage_error(
+                actor,
+                job,
+                Permission.JOB_UPDATE,
+                "Filed or cancelled jobs require the exceptional transition process.",
+                "job.edit_request_decision.denied",
+                current_time,
+            )
+        request.status = EditRequestStatus.APPROVED if approved else EditRequestStatus.DENIED
+        request.decided_by_user_id = actor.id
+        request.decided_at = current_time
+        request.decision_reason = reason.strip()
+        before = job_snapshot(job)
+        after: dict[str, object] | None = None
+        if approved:
+            job.stage = JobStage.CONFIRMED
+            job.maker_edit_locked = False
+            job.maker_correction_required = True
+            job.checker_correction_required = True
+            job.checked_by_user_id = None
+            job.checked_at = None
+            job.last_return_reason = reason.strip()
+            self.session.flush()
+            after = job_snapshot(job)
+        self.audit.record(
+            actor=actor,
+            action=("job.edit_request_approved" if approved else "job.edit_request_denied"),
+            reason=reason.strip(),
+            occurred_at=current_time,
+            job=job,
+            before=before if approved else None,
+            after=after,
+            decision=decision,
+            context={
+                "edit_request_id": request.id,
+                "requested_by_user_id": request.requested_by_user_id,
+            },
         )
         self.session.flush()
         return job
@@ -664,6 +979,9 @@ class WorkflowService:
             job.checked_at = None
             job.filed_by_user_id = None
             job.filed_at = None
+            job.maker_edit_locked = False
+            job.maker_correction_required = True
+            job.checker_correction_required = True
         request.status = ExceptionalRequestStatus.EXECUTED
         request.decided_by_user_id = actor.id
         request.decided_at = current_time
@@ -950,6 +1268,94 @@ class WorkflowService:
             at,
         )
 
+    def _checklist_error(
+        self,
+        actor: User,
+        job: Job,
+        explanation: str,
+        at: datetime,
+    ) -> None:
+        self._deny(
+            actor,
+            job,
+            Permission.JOB_CHECK,
+            ReasonCode.INVALID_CHECKLIST,
+            explanation,
+            "job.check.denied",
+            at,
+        )
+
+    def _checklist_decisions(
+        self,
+        *,
+        actor: User,
+        job: Job,
+        checklist_items: list[dict[str, object]] | None,
+        legacy_approved: bool | None,
+        at: datetime,
+    ) -> list[dict[str, object]]:
+        template = self._checklist_template(job)
+        if checklist_items is None:
+            if legacy_approved is None:
+                self._checklist_error(actor, job, "Checklist item decisions are required.", at)
+            return [
+                {
+                    **item,
+                    "status": (
+                        ChecklistItemStatus.COMPLETE.value
+                        if legacy_approved or index
+                        else ChecklistItemStatus.INCOMPLETE.value
+                    ),
+                    "justification": None,
+                }
+                for index, item in enumerate(template)
+            ]
+        submitted: dict[str, dict[str, object]] = {}
+        for item in checklist_items:
+            key = item.get("key")
+            raw_status = item.get("status")
+            justification = str(item.get("justification") or "").strip()
+            if not isinstance(key, str) or key in submitted:
+                self._checklist_error(actor, job, "Checklist item keys must be unique.", at)
+            try:
+                status = ChecklistItemStatus(str(raw_status))
+            except ValueError:
+                self._checklist_error(actor, job, "A checklist item has an invalid status.", at)
+            if status is ChecklistItemStatus.NOT_APPLICABLE and not justification:
+                self._checklist_error(
+                    actor,
+                    job,
+                    "Not Applicable checklist items require a justification.",
+                    at,
+                )
+            submitted[key] = {
+                "status": status.value,
+                "justification": justification or None,
+            }
+        template_keys = {str(item["key"]) for item in template}
+        if set(submitted) != template_keys:
+            self._checklist_error(
+                actor,
+                job,
+                "Checklist decisions must include every generated item exactly once.",
+                at,
+            )
+        return [{**item, **submitted[str(item["key"])]} for item in template]
+
+    @staticmethod
+    def _checklist_template(job: Job) -> list[dict[str, object]]:
+        common = [
+            {"key": key, "label": label, "required": True}
+            for key, label in CHECKLIST_TEMPLATES[job.mode]
+        ]
+        direction_key = f"{job.direction.value}_requirements"
+        direction_label = (
+            "Import permits and arrival requirements are verified"
+            if job.direction is JobDirection.IMPORT
+            else "Export permits and departure requirements are verified"
+        )
+        return [*common, {"key": direction_key, "label": direction_label, "required": True}]
+
     @staticmethod
     def _scope(client_id: str, branch_id: str, direction: JobDirection, mode: JobMode) -> Scope:
         return Scope(
@@ -1013,18 +1419,26 @@ class WorkflowService:
                 "job.update.denied",
                 current_time,
             )
+        if job.maker_edit_locked:
+            self._deny(
+                actor,
+                job,
+                permission,
+                ReasonCode.SUBMISSION_LOCKED,
+                "The submitted revision is locked. An approved edit request or return is required.",
+                "job.update.denied",
+                current_time,
+            )
         before = job_snapshot(job)
         if goods_description is not None:
             job.goods_description = goods_description.strip()
         if container_reference is not None:
             job.container_reference = self._optional_text(container_reference)
-        if job.stage is JobStage.CHECKED:
-            job.stage = JobStage.PREPARED
-            job.checklist_revision += 1
-            job.prepared_by_user_id = actor.id
-            job.prepared_at = current_time
+        if job.checked_by_user_id is not None:
+            job.stage = JobStage.CONFIRMED
             job.checked_by_user_id = None
             job.checked_at = None
+            job.checker_correction_required = True
         self.session.flush()
         self.audit.record(
             actor=actor,
@@ -1044,8 +1458,9 @@ class WorkflowService:
         *,
         actor: User,
         job: Job,
-        checklist_data: dict[str, object],
+        checklist_data: dict[str, object] | None,
         expected_version: int,
+        justification: str = "",
         now: datetime | None = None,
     ) -> Job:
         current_time = self._time(now)
@@ -1064,7 +1479,7 @@ class WorkflowService:
             current_time,
             "job.prepare.denied",
         )
-        if job.stage not in {JobStage.CONFIRMED, JobStage.PREPARED, JobStage.REOPENED}:
+        if job.stage not in {JobStage.CONFIRMED, JobStage.REOPENED}:
             self._stage_error(
                 actor,
                 job,
@@ -1073,21 +1488,61 @@ class WorkflowService:
                 "job.prepare.denied",
                 current_time,
             )
-        if not checklist_data:
-            raise WorkflowValidationError("Checklist data is required.")
+        if job.maker_edit_locked:
+            self._deny(
+                actor,
+                job,
+                Permission.JOB_PREPARE,
+                ReasonCode.SUBMISSION_LOCKED,
+                "The current revision is already submitted and locked.",
+                "job.prepare.denied",
+                current_time,
+            )
+        is_correction = job.checklist_revision > 0 or job.maker_correction_required
+        if is_correction and not justification.strip():
+            self._deny(
+                actor,
+                job,
+                Permission.JOB_PREPARE,
+                ReasonCode.JUSTIFICATION_REQUIRED,
+                "A justification is required for every correction resubmission.",
+                "job.prepare.denied",
+                current_time,
+            )
         before = job_snapshot(job)
-        job.checklist_data = dict(checklist_data)
         job.checklist_revision += 1
+        job.checklist_data = {
+            "revision": job.checklist_revision,
+            "mode": job.mode.value,
+            "direction": job.direction.value,
+            "items": [
+                {**item, "status": None, "justification": None}
+                for item in self._checklist_template(job)
+            ],
+        }
         job.prepared_by_user_id = actor.id
         job.prepared_at = current_time
         job.checked_by_user_id = None
         job.checked_at = None
         job.stage = JobStage.PREPARED
+        job.maker_edit_locked = True
+        job.maker_correction_required = False
+        job.checker_correction_required = is_correction
+        job.last_maker_justification = justification.strip() or None
+        approved_requests = self.session.scalars(
+            select(JobEditRequest).where(
+                JobEditRequest.job_id == job.id,
+                JobEditRequest.status == EditRequestStatus.APPROVED,
+            )
+        )
+        for request in approved_requests:
+            request.status = EditRequestStatus.CONSUMED
+            request.consumed_at = current_time
         self.session.flush()
         self.audit.record(
             actor=actor,
             action="job.prepared",
-            reason="Checklist submitted for independent verification.",
+            reason=justification.strip() or "Shipment submitted for independent verification.",
             occurred_at=current_time,
             job=job,
             before=before,

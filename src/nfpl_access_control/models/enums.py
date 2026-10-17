@@ -41,6 +41,25 @@ class JobStage(StrEnum):
     REOPENED = "reopened"
 
 
+class ChecklistItemStatus(StrEnum):
+    COMPLETE = "complete"
+    INCOMPLETE = "incomplete"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class FilingReturnCategory(StrEnum):
+    MAKER_FAULT = "maker_fault"
+    CHECKER_FAULT = "checker_fault"
+    BOTH = "both"
+
+
+class EditRequestStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+    CONSUMED = "consumed"
+
+
 class Permission(StrEnum):
     JOB_VIEW = "job:view"
     JOB_CREATE = "job:create"

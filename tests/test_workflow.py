@@ -21,9 +21,11 @@ from nfpl_access_control.models import (
     EmployeeAvailability,
     ExceptionalAction,
     ExceptionalRequestStatus,
+    FilingReturnCategory,
     Job,
     JobDelegation,
     JobDirection,
+    JobEditRequest,
     JobMode,
     JobResponsibility,
     JobStage,
@@ -369,7 +371,9 @@ def test_absent_employee_cannot_be_assigned_or_act(session: Session) -> None:
     assert caught.value.decision.reason_code is ReasonCode.EMPLOYEE_ABSENT
 
 
-def test_edit_after_check_invalidates_verification(session: Session) -> None:
+def test_edit_after_check_requires_admin_approval_and_fresh_verification(
+    session: Session,
+) -> None:
     values = _setup(session)
     service = WorkflowService(session)
     _assign_core(service, values)
@@ -394,6 +398,30 @@ def test_edit_after_check_invalidates_verification(session: Session) -> None:
     )
     checked_revision = job.checklist_revision
 
+    with pytest.raises(WorkflowError) as caught:
+        service.update_job(
+            actor=maker,
+            job=job,
+            expected_version=job.version,
+            goods_description="Unapproved correction",
+            now=NOW,
+        )
+    assert caught.value.decision.reason_code is ReasonCode.SUBMISSION_LOCKED
+
+    request = service.request_edit(
+        actor=maker,
+        job=job,
+        reason="The goods description needs correction",
+        now=NOW,
+    )
+    service.decide_edit_request(
+        actor=values["admin"],
+        request=request,
+        approved=True,
+        reason="Correction is limited to this shipment",
+        expected_version=job.version,
+        now=NOW,
+    )
     service.update_job(
         actor=maker,
         job=job,
@@ -402,9 +430,291 @@ def test_edit_after_check_invalidates_verification(session: Session) -> None:
         now=NOW,
     )
 
-    assert job.stage is JobStage.PREPARED
+    assert job.stage is JobStage.CONFIRMED
     assert job.checked_by_user_id is None
+    assert job.checklist_revision == checked_revision
+    with pytest.raises(WorkflowError) as caught:
+        service.prepare(
+            actor=maker,
+            job=job,
+            checklist_data=None,
+            justification="",
+            expected_version=job.version,
+            now=NOW,
+        )
+    assert caught.value.decision.reason_code is ReasonCode.JUSTIFICATION_REQUIRED
+    service.prepare(
+        actor=maker,
+        job=job,
+        checklist_data=None,
+        justification="Corrected the goods description requested above",
+        expected_version=job.version,
+        now=NOW,
+    )
     assert job.checklist_revision == checked_revision + 1
+    assert job.maker_edit_locked is True
+
+
+def test_dynamic_checker_checklist_rejects_invalid_na_and_returns_incomplete(
+    session: Session,
+) -> None:
+    values = _setup(session)
+    service = WorkflowService(session)
+    _assign_core(service, values)
+    job = values["job"]
+    maker = values["maker"]
+    checker = values["checker"]
+    assert isinstance(job, Job) and isinstance(maker, User) and isinstance(checker, User)
+    service.prepare(
+        actor=maker,
+        job=job,
+        checklist_data={"maker_cannot_define": True},
+        expected_version=job.version,
+        now=NOW,
+    )
+    items = job.checklist_data["items"]
+    assert isinstance(items, list)
+    assert {item["key"] for item in items} >= {"air_waybill", "import_requirements"}
+    assert "maker_cannot_define" not in job.checklist_data
+    invalid = [{"key": item["key"], "status": "complete"} for item in items]
+    invalid[0] = {"key": invalid[0]["key"], "status": "not_applicable"}
+    with pytest.raises(WorkflowError) as caught:
+        service.check(
+            actor=checker,
+            job=job,
+            approved=None,
+            reason="",
+            checklist_items=invalid,
+            expected_version=job.version,
+            now=NOW,
+        )
+    assert caught.value.decision.reason_code is ReasonCode.INVALID_CHECKLIST
+
+    returned = [{"key": item["key"], "status": "complete"} for item in items]
+    returned[0]["status"] = "incomplete"
+    service.check(
+        actor=checker,
+        job=job,
+        approved=None,
+        reason="Commercial invoice total does not match",
+        checklist_items=returned,
+        expected_version=job.version,
+        now=NOW,
+    )
+    assert job.stage is JobStage.CONFIRMED
+    assert job.maker_edit_locked is False
+    assert job.maker_correction_required is True
+    assert job.last_return_reason == "Commercial invoice total does not match"
+
+
+@pytest.mark.parametrize(
+    ("mode", "direction", "mode_key", "direction_key"),
+    [
+        (JobMode.AIR, JobDirection.IMPORT, "air_waybill", "import_requirements"),
+        (JobMode.AIR, JobDirection.EXPORT, "air_waybill", "export_requirements"),
+        (JobMode.FCL, JobDirection.IMPORT, "bill_of_lading", "import_requirements"),
+        (JobMode.FCL, JobDirection.EXPORT, "container_reference", "export_requirements"),
+        (JobMode.LCL, JobDirection.IMPORT, "house_bill_of_lading", "import_requirements"),
+        (JobMode.LCL, JobDirection.EXPORT, "consolidation_reference", "export_requirements"),
+    ],
+)
+def test_checklist_template_is_derived_from_fixed_job_category(
+    session: Session,
+    mode: JobMode,
+    direction: JobDirection,
+    mode_key: str,
+    direction_key: str,
+) -> None:
+    values = _setup(session)
+    service = WorkflowService(session)
+    _assign_core(service, values)
+    job = values["job"]
+    maker = values["maker"]
+    assert isinstance(job, Job) and isinstance(maker, User)
+    job.mode = mode
+    job.direction = direction
+    session.flush()
+    service.prepare(
+        actor=maker,
+        job=job,
+        checklist_data=None,
+        expected_version=job.version,
+        now=NOW,
+    )
+    keys = {item["key"] for item in job.checklist_data["items"]}  # type: ignore[index]
+    assert {mode_key, direction_key}.issubset(keys)
+
+
+def test_filing_return_routes_checker_or_maker_and_requires_justification(
+    session: Session,
+) -> None:
+    values = _setup(session)
+    service = WorkflowService(session)
+    _assign_core(service, values)
+    job = values["job"]
+    maker = values["maker"]
+    checker = values["checker"]
+    filer = values["filer"]
+    assert isinstance(job, Job)
+    assert all(isinstance(item, User) for item in (maker, checker, filer))
+    service.prepare(
+        actor=maker,
+        job=job,
+        checklist_data=None,
+        expected_version=job.version,
+        now=NOW,
+    )
+    service.check(
+        actor=checker,
+        job=job,
+        approved=True,
+        reason="Initial verification",
+        expected_version=job.version,
+        now=NOW,
+    )
+    with pytest.raises(WorkflowError) as caught:
+        service.return_for_correction(
+            actor=filer,
+            job=job,
+            category=FilingReturnCategory.CHECKER_FAULT,
+            reason="",
+            expected_version=job.version,
+            now=NOW,
+        )
+    assert caught.value.decision.reason_code is ReasonCode.JUSTIFICATION_REQUIRED
+    service.return_for_correction(
+        actor=filer,
+        job=job,
+        category=FilingReturnCategory.CHECKER_FAULT,
+        reason="Not Applicable decision needs evidence",
+        expected_version=job.version,
+        now=NOW,
+    )
+    assert job.stage is JobStage.PREPARED
+    assert job.maker_edit_locked is True
+    with pytest.raises(WorkflowError) as caught:
+        service.check(
+            actor=checker,
+            job=job,
+            approved=True,
+            reason="",
+            justification="",
+            expected_version=job.version,
+            now=NOW,
+        )
+    assert caught.value.decision.reason_code is ReasonCode.JUSTIFICATION_REQUIRED
+    service.check(
+        actor=checker,
+        job=job,
+        approved=True,
+        reason="",
+        justification="Rechecked the disputed supporting evidence",
+        expected_version=job.version,
+        now=NOW,
+    )
+    service.return_for_correction(
+        actor=filer,
+        job=job,
+        category=FilingReturnCategory.BOTH,
+        reason="Description and checklist both need correction",
+        expected_version=job.version,
+        now=NOW,
+    )
+    assert job.stage is JobStage.CONFIRMED
+    assert job.maker_edit_locked is False
+    assert job.maker_correction_required is True
+    assert job.checker_correction_required is True
+
+
+def test_admin_maker_cannot_approve_own_edit_request(session: Session) -> None:
+    values = _setup(session)
+    service = WorkflowService(session)
+    _assign_core(service, values)
+    job = values["job"]
+    maker = values["maker"]
+    admin = values["admin"]
+    assert isinstance(job, Job) and isinstance(maker, User) and isinstance(admin, User)
+    _grant(session, maker, ADMIN_ROLE, admin)
+    service.prepare(
+        actor=maker,
+        job=job,
+        checklist_data=None,
+        expected_version=job.version,
+        now=NOW,
+    )
+    request = service.request_edit(
+        actor=maker, job=job, reason="Need to correct my submission", now=NOW
+    )
+    with pytest.raises(WorkflowError) as caught:
+        service.decide_edit_request(
+            actor=maker,
+            request=request,
+            approved=True,
+            reason="Attempt to approve my own request",
+            expected_version=job.version,
+            now=NOW,
+        )
+    assert caught.value.decision.reason_code is ReasonCode.SELF_APPROVAL_FORBIDDEN
+    assert job.maker_edit_locked is True
+
+
+def test_edit_request_is_job_specific_independent_and_version_safe(session: Session) -> None:
+    values = _setup(session)
+    service = WorkflowService(session)
+    _assign_core(service, values)
+    job = values["job"]
+    maker = values["maker"]
+    admin = values["admin"]
+    assert isinstance(job, Job) and isinstance(maker, User) and isinstance(admin, User)
+    service.prepare(
+        actor=maker,
+        job=job,
+        checklist_data=None,
+        expected_version=job.version,
+        now=NOW,
+    )
+    request = service.request_edit(actor=maker, job=job, reason="Correct a typo", now=NOW)
+    assert isinstance(request, JobEditRequest)
+    with pytest.raises(WorkflowError) as caught:
+        service.decide_edit_request(
+            actor=admin,
+            request=request,
+            approved=True,
+            reason="Approved",
+            expected_version=job.version - 1,
+            now=NOW,
+        )
+    assert caught.value.decision.reason_code is ReasonCode.STALE_VERSION
+    assert job.maker_edit_locked is True
+
+
+def test_phase5b_mutation_and_audit_rollback_together(session: Session) -> None:
+    values = _setup(session)
+    service = WorkflowService(session)
+    _assign_core(service, values)
+    session.commit()
+    job = values["job"]
+    maker = values["maker"]
+    assert isinstance(job, Job) and isinstance(maker, User)
+
+    def fail_audit(**_kwargs: object) -> None:
+        raise RuntimeError("simulated audit storage failure")
+
+    service.audit.record = fail_audit  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="audit storage"):
+        service.prepare(
+            actor=maker,
+            job=job,
+            checklist_data=None,
+            expected_version=job.version,
+            now=NOW,
+        )
+    session.rollback()
+    restored = session.get(Job, job.id)
+    assert restored is not None
+    assert restored.stage is JobStage.CONFIRMED
+    assert restored.checklist_revision == 0
+    assert restored.maker_edit_locked is False
 
 
 def test_filed_cancel_requires_different_admin_approval(session: Session) -> None:

@@ -117,6 +117,18 @@ def test_client_status_history_and_cursor_feed_are_isolated_and_sanitized(
     assert status.status_code == 200
     assert status.json()["reference"] == "CLIENT-VISIBLE"
     assert api_client.get(f"/v1/client/jobs/{hidden.id}/status", headers=headers).status_code == 404
+    detail = api_client.get(f"/v1/jobs/{visible.id}", headers=headers)
+    assert detail.status_code == 200
+    assert set(detail.json()) == {
+        "id",
+        "reference",
+        "client_id",
+        "direction",
+        "mode",
+        "stage",
+        "version",
+    }
+    assert api_client.get(f"/v1/jobs/{hidden.id}", headers=headers).status_code == 404
     assert (
         api_client.get(f"/v1/admin/jobs/{visible.id}/versions", headers=headers).status_code == 404
     )

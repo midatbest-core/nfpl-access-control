@@ -24,6 +24,15 @@ def job_snapshot(job: Job) -> dict[str, object]:
         "container_reference": job.container_reference,
         "checklist_data": deepcopy(job.checklist_data),
         "checklist_revision": job.checklist_revision,
+        "maker_edit_locked": job.maker_edit_locked,
+        "maker_correction_required": job.maker_correction_required,
+        "checker_correction_required": job.checker_correction_required,
+        "last_return_category": (
+            job.last_return_category.value if job.last_return_category is not None else None
+        ),
+        "last_return_reason": job.last_return_reason,
+        "last_maker_justification": job.last_maker_justification,
+        "last_checker_justification": job.last_checker_justification,
         "prepared_by_user_id": job.prepared_by_user_id,
         "checked_by_user_id": job.checked_by_user_id,
         "filed_by_user_id": job.filed_by_user_id,

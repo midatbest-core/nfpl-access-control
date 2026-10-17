@@ -342,12 +342,12 @@ def test_historical_maker_checker_separation_and_availability(session: Session) 
     )
     before_absence = HistoryService(session).historical_eligibility(
         job_id=job.id,
-        permission=Permission.JOB_PREPARE,
+        permission=Permission.JOB_VIEW,
         at=prepared_at + timedelta(seconds=30),
     )
     at_absence = HistoryService(session).historical_eligibility(
         job_id=job.id,
-        permission=Permission.JOB_PREPARE,
+        permission=Permission.JOB_VIEW,
         at=prepared_at + timedelta(minutes=1),
     )
     assert maker.id in {item.user_id for item in before_absence.candidates}

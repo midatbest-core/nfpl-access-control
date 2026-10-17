@@ -65,6 +65,13 @@ Do not commit credentials, tokens, or local environment files. Provide safe exam
   eligibility uses UTC half-open effective intervals (`valid_from <= t <
   valid_until`, with null `valid_until` meaning open-ended) and is distinct
   from the record of actual actors.
+- Full shipment/audit history is limited to a scoped Admin. A scoped Filing
+  Officer receives operational history without full snapshots or policy
+  context; Client Viewers receive sanitized own-client updates; Makers and
+  Checkers do not receive complete shipment history.
+- Application ORM guards enforce append-only history for normal service code.
+  Database owners can bypass application guards, so document least-privilege
+  database roles and the absence of portable trigger/tamper-evidence controls.
 - Work queue list and count queries must use the same policy predicates as
   mutations, bounded keyset pagination, suitable indexes, and no N+1 queries.
 - Self-grants and sensitive self-approval are forbidden. The first Admin will be
@@ -73,15 +80,23 @@ Do not commit credentials, tokens, or local environment files. Provide safe exam
 
 ## Delivery Phases
 
-Implement only the approved phase. Phases 1 through 3 now cover the skeleton,
+Implement only the approved phase. Phases 1 through 4 now cover the skeleton,
 database/Alembic, core models, identity/authentication, scoped RBAC, policy
 explanations, role management, effective grant history, transactional shipment
 workflow, responsibility/reassignment, expiring delegation, employee
 availability, deterministic assignment suggestions, exceptional transitions,
-and atomic audit foundations. Later phases add complete audit/version history
-and client feeds; admin requests, bootstrap, parser/queues and employee account
-operations; then deterministic seed, scale benchmarks, and final documentation.
-Do not claim unexecuted tests or benchmark figures.
+atomic append-only audit/version history, point-in-time eligibility, and
+client-safe updates. Later phases add admin requests, bootstrap, parser/queues
+and employee account operations; then deterministic seed, scale benchmarks, and
+final documentation. Do not claim unexecuted tests or benchmark figures.
+
+The approved later workflow keeps Maker shipment edits separate from the
+Checker-owned three-state checklist. Submission locks Maker edits; corrections
+require an approved request or return, every correction/resubmission needs a
+justification, Filing Officers may return work, and relevant changes require
+fresh independent verification. Notifications and audits remain distinct. Do
+not implement these later-phase behaviors without approval, but preserve their
+version and audit compatibility.
 
 ## Zero-Cost Deployment Constraints
 

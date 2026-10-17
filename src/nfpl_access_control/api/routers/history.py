@@ -15,6 +15,7 @@ from nfpl_access_control.schemas.history import (
     ClientUpdateResponse,
     HistoricalEligibilityResponse,
     JobVersionResponse,
+    OperationalHistoryResponse,
     VersionDiffResponse,
 )
 from nfpl_access_control.services.client_updates import (
@@ -55,6 +56,30 @@ def _version_response(item) -> JobVersionResponse:
         reason=item.reason,
         snapshot=item.snapshot,
     )
+
+
+@router.get(
+    "/jobs/{job_id}/operational-history",
+    response_model=list[OperationalHistoryResponse],
+)
+def operational_history(
+    job_id: str,
+    actor: CurrentActor,
+    session: DatabaseSession,
+    before_version: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> list[OperationalHistoryResponse]:
+    job = _job(session, job_id)
+    decision = AuthorizationEngine(session).authorize_job(actor, Permission.JOB_FILE, job)
+    if not decision.allowed:
+        raise HTTPException(status_code=404, detail="Job not found or not visible")
+    try:
+        items = HistoryService(session).operational_history(
+            job_id, before_version=before_version, limit=limit
+        )
+    except HistoryValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return [OperationalHistoryResponse.from_item(item) for item in items]
 
 
 @router.get("/admin/jobs/{job_id}/versions", response_model=list[JobVersionResponse])

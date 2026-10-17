@@ -1,7 +1,7 @@
 # NFPL Access Control Service - Test Report
 
 Report date: 2026-10-17  
-Scope: Phases 1 through 3 plus zero-cost deployment amendment
+Scope: Phases 1 through 4 plus zero-cost deployment amendment
 
 ## Environment
 
@@ -29,11 +29,15 @@ Commands executed:
 .venv\Scripts\pytest.exe --cov=nfpl_access_control --cov-report=term-missing
 .venv\Scripts\alembic.exe upgrade head
 .venv\Scripts\alembic.exe check
+.venv\Scripts\alembic.exe downgrade base
+.venv\Scripts\alembic.exe upgrade head
 .venv\Scripts\python.exe -m compileall -q src tests alembic
 ~~~
 
-Additional Python assertions parsed `render.yaml`, checked its free plan and
-health path, loaded the ASGI app, and generated OpenAPI.
+Additional Python assertions loaded the ASGI app, generated OpenAPI, checked
+all Phase 4 paths, and called the hidden-from-schema `/health` route. Earlier
+Phase 3 verification parsed `render.yaml` and checked its free-plan and health
+configuration.
 
 Final results:
 
@@ -41,11 +45,12 @@ Final results:
 - Ruff format check: pass
 - Dependency consistency: pass, no broken requirements
 - Render YAML parse/config assertions: pass
-- Pytest: **59 passed, 0 failed, 0 skipped**, 1 third-party deprecation warning
-- Statement coverage: **84%** (1,564 statements, 245 missed)
-- Alembic upgrade: pass through canonical `DATABASE_URL`
+- Pytest: **71 passed, 0 failed, 0 skipped**, 1 third-party deprecation warning
+- Statement coverage: **87%** (2,101 statements, 272 missed)
+- Alembic upgrade, full downgrade, and re-upgrade: pass through a disposable
+  canonical `DATABASE_URL`
 - Alembic model/schema drift check: pass, no new upgrade operations detected
-- Compile/import/OpenAPI restart checks: pass
+- Compile/import/OpenAPI/health checks: pass; 29 documented API paths
 - Benchmarks: **not run**; benchmark implementation is Phase 6
 
 The warning comes from FastAPI's installed test-client compatibility layer:
@@ -139,6 +144,33 @@ should track it.
 - Migration upgrade, model/schema drift, and full downgrade cover the five new
   workflow/audit tables and additive user/job columns.
 
+## Phase 4 Audit, History, and Client Scenarios Verified
+
+- Every successful shipment mutation that changes shipment state writes an
+  immutable `JobVersion` with the same transaction as its audit event. Explicit
+  rollback removes the mutation, version, and audit together.
+- Role grants/revocations, responsibility changes, delegations, availability
+  changes, parser modifications, workflow transitions, and relevant denials
+  have append-oriented evidence. Stale-version and invalid-stage denials record
+  structured reason codes without creating false shipment versions.
+- Historical state, version differences, field-change attribution, and actual
+  approval/rejection actors are reconstructable from immutable snapshots.
+- Historical eligibility applies effective role scope, visibility,
+  responsibility or delegation, availability, stage, and maker/checker
+  separation at exact UTC half-open boundaries. Missing job-version or
+  responsibility evidence produces `complete=false` with limitations.
+- Actual actors are returned separately from people who could have acted.
+- Admin full history, Filing Officer operational history, Client Viewer
+  sanitized own-client history, and Maker/Checker full-history denial are
+  enforced by authenticated backend endpoints.
+- Cross-client client status/history returns the same generic 404 as a missing
+  job. Cursor feeds use bounded keyset pagination and expose no actor, reason,
+  checklist, role, or authorization-context fields.
+- ORM update/delete attempts against audits, versions, role-assignment events,
+  responsibility events, and availability events are rejected as append-only.
+- Revision `20261017_0004` adds affected-version and denial metadata plus
+  `job_versions` and `user_availability_events` with history lookup indexes.
+
 ## Failed Attempts and Corrections
 
 Results are recorded rather than hidden:
@@ -178,21 +210,30 @@ Results are recorded rather than hidden:
 9. The first combined final command found one import-order lint error while all
    58 tests passed. The import was reordered; after the audit immutability test
    was added, the final lint command and 59-test suite passed.
+10. The resumed Phase 4 focused run found one missing
+    `RoleAssignmentEvent` test import: 9 passed and 1 failed. The import was
+    restored; no application behavior was changed to satisfy it.
+11. The first combined smoke command incorrectly expected `/health` in
+    OpenAPI, but the liveness route is intentionally excluded from the schema.
+    A corrected check separately generated OpenAPI and called `/health`; both
+    passed.
 
 ## Not Yet Verified
 
 The complete security matrix for original questions Q1-Q14 is not yet claimed.
-Historical job-version and eligibility reconstruction, client feeds, permission
-requests and independent Admin-role grants, production first-Admin bootstrap,
-work queue list/count parity, employee registration/login/account approval,
-employee directory, deterministic seed/load generation, and scale benchmarks
-belong to later approved phases. The Phase 3 audit table is a transactional
-foundation; database-level immutability controls and full historical
-reconstruction remain Phase 4 work.
+Permission requests and independent Admin-role grants, production first-Admin
+bootstrap, work queue list/count parity, employee registration/password login
+and account approval, employee directory, deterministic seed/load generation,
+and scale benchmarks belong to later approved phases. Finalized correction/
+return locks, three-state Checker-owned checklist behavior, and notifications
+also remain deferred.
 
 No live Render, Railway, Vercel, or Neon deployment was performed, and no real
 PostgreSQL server was available for integration testing. Current remaining risks
-include lack of a PostgreSQL CI target, no production credential
-issuance/first-Admin bootstrap command yet, and no generalized immutable audit
-store beyond scoped assignment events. No latency or scale figure has been
+include lack of a PostgreSQL CI target and no production credential
+issuance/first-Admin bootstrap command yet. Append-only enforcement is at the
+SQLAlchemy application layer; a database owner or direct SQL client can still
+alter history because portable triggers or a tamper-evident archive are not
+implemented. Historical account activation/deactivation events do not exist
+until employee management is implemented. No latency or scale figure has been
 measured or claimed.

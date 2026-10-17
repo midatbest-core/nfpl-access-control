@@ -1,11 +1,13 @@
 # NFPL Access Control Service
 
 Security-focused authorization for NFPL customs-brokerage shipment jobs. This
-repository currently implements **Phases 1 through 3**: the project skeleton,
+repository currently implements **Phases 1 through 4**: the project skeleton,
 database and authentication foundation, deployment configuration, scoped RBAC,
 central authorization explanations, Admin-controlled grants/revocations, and
 configurable safe roles, plus transactional shipment workflow, responsibility,
-delegation, deterministic assignment suggestions, and audit foundations.
+delegation, deterministic assignment suggestions, append-only audit history,
+immutable shipment versions, historical eligibility reconstruction, and
+client-safe incremental updates.
 
 The original `NFPL_Access_Control_Assignment.pdf` is retained as the source
 brief. The approved expanded requirements govern the phased implementation.
@@ -112,6 +114,15 @@ The available endpoints are:
   `POST /v1/admin/exception-requests/{id}/approve`: independently approved
   filed cancellation or reopening.
 - `PATCH /v1/admin/employees/{id}/availability`: reasoned staff availability.
+- `GET /v1/admin/jobs/{id}/versions|state-at|diff|field-changes|audit`:
+  Admin-only full version and audit inspection for an authorized shipment.
+- `GET /v1/admin/jobs/{id}/historical-eligibility`: reconstructs who could
+  perform a requested action at an exact aware timestamp, separately from who
+  actually changed the recorded version.
+- `GET /v1/jobs/{id}/operational-history`: bounded operational history for a
+  scoped Filing Officer or Admin. It omits snapshots and authorization context.
+- `GET /v1/client/jobs/{id}/status|history` and `GET /v1/client/updates`:
+  client-scoped, sanitized, read-only status and cursor-based updates.
 
 The health endpoint intentionally avoids a database query so platform probes do
 not keep a free PostgreSQL compute awake. Database readiness is established by
@@ -157,7 +168,7 @@ No Railway-specific service is required by the application.
 
 ### 3. Vercel frontend
 
-No frontend source exists through Phase 3, so a speculative Vercel project file is
+No frontend source exists through Phase 4, so a speculative Vercel project file is
 not checked in. When the frontend is introduced:
 
 1. Import its directory as a Vercel project and keep framework auto-detection.
@@ -221,7 +232,12 @@ reserved for the later independent-approval flow.
 - `ExceptionalTransitionRequest`: independently approved filed cancellation
   or reopening.
 - `AuditEvent`: action, actor, time, reason, authorization context, and job
-  before/after snapshots stored atomically with Phase 3 mutations.
+  before/after snapshots, affected version, and denial marker stored atomically
+  with mutations.
+- `JobVersion`: immutable shipment snapshots keyed by job and optimistic
+  version, including the actual actor, action, reason, and UTC event time.
+- `UserAvailabilityEvent`: effective-time evidence used when reconstructing
+  historical action eligibility.
 
 Jobs follow `confirmed -> prepared -> checked -> filed`. A Checker rejection
 returns a job to `confirmed`. A relevant edit after checking returns it to
@@ -244,8 +260,26 @@ excluded from Checker suggestions. Saved assignments are revalidated through
 the same authorization engine.
 
 All application timestamps represent UTC instants. Historical policy intervals
-will use half-open semantics: `valid_from <= timestamp < valid_until`, with a
-null end meaning open-ended.
+use half-open semantics: `valid_from <= timestamp < valid_until`, with a null
+end meaning open-ended. Point-in-time reconstruction combines the latest job
+version, effective role scopes, responsibility/reassignment events, active
+delegations, availability events, stage restrictions, and maker/checker
+separation. If required job-version or responsibility evidence is absent, the
+response sets `complete=false` and explains the limitation instead of
+inventing an eligible actor. Actual version actors are reported separately.
+
+History access is enforced in the API:
+
+| Actor | History access |
+| --- | --- |
+| Admin | Full authorized versions, diffs, audit context, and reconstruction |
+| Filing Officer | Bounded operational history for shipments in filing scope |
+| Client Viewer | Sanitized status/history for its own client only |
+| Maker / Checker | No complete shipment-history endpoint |
+
+Client feeds contain only reference, stage/progress, safe status text, time,
+version, and cursor. They never expose employee identities, reasons, checklist
+contents, role data, or internal authorization context.
 
 ## Security Direction
 
@@ -259,9 +293,9 @@ queue/action predicates.
 The planned first-Admin bootstrap is a trusted one-time offline command. It will
 only operate when no Admin grant exists, record a bootstrap audit event, and
 become unavailable afterward. It is documented but remains deferred until the
-generalized audit and independent-approval phase. Phase 2 tests use an explicit
-trusted bootstrap fixture; a real deployment cannot administer grants until the
-bootstrap command is implemented.
+independent-approval phase. Phase 2 tests use an explicit trusted bootstrap
+fixture; a real deployment cannot administer grants until the bootstrap command
+is implemented.
 
 ## Inspect with DBeaver
 
@@ -283,24 +317,30 @@ SELECT job_id, responsibility, user_id, assigned_at
 FROM job_responsibilities ORDER BY job_id, responsibility;
 SELECT job_id, action, actor_user_id, occurred_at, reason
 FROM audit_events ORDER BY occurred_at DESC LIMIT 100;
+SELECT job_id, version_number, recorded_at, actor_user_id, action, reason, snapshot
+FROM job_versions ORDER BY job_id, version_number DESC LIMIT 100;
+SELECT user_id, previous_availability, availability, effective_at, actor_user_id, reason
+FROM user_availability_events ORDER BY effective_at DESC LIMIT 100;
 ~~~
 
-`job_versions` is intentionally not present yet; immutable version
-reconstruction is Phase 4. Phase 3 before/after snapshots can be inspected in
-`audit_events`. ORM update/delete operations on audit rows are rejected;
-database-trigger enforcement against direct SQL remains a Phase 4 portability
-decision.
+ORM update/delete operations on audit rows, job versions, role-assignment
+events, responsibility events, and availability events are rejected.
+Immutability is application-level: a database owner can still alter rows using
+direct SQL. Production deployments should restrict the application's database
+role from destructive history operations; portable database triggers or an
+external tamper-evident archive remain possible defense-in-depth work.
 
 ## Current Limitations
 
-Phase 3 intentionally does **not** yet include employee password registration/
-login and account approval, the employee directory, immutable job-version rows
-and historical eligibility reconstruction, client-safe incremental feeds,
-general permission requests or independent Admin-role grant approval, the
-production first-Admin bootstrap command, My Work queue/count endpoints,
-deterministic seed/load generation, benchmarks, frontend source, or the final
-design document/demo. The audit table is the transactional foundation, not the
-completed Phase 4 historical reconstruction feature.
+Phase 4 intentionally does **not** yet include employee password registration/
+login and account approval, the employee directory, general permission requests
+or independent Admin-role grant approval, the production first-Admin bootstrap
+command, My Work queue/count endpoints, deterministic seed/load generation,
+benchmarks, frontend source, or the final design document/demo. Finalized
+submission locks, Admin-approved correction requests, Checker/Filing Officer
+returns, three-state checklist ownership, and notifications remain later
+workflow work; the Phase 4 version/audit design preserves the evidence needed
+for them without implementing them prematurely.
 
 SQLite is for local development, not Render/Railway persistence. PostgreSQL has
 not yet been exercised by this local test run. No latency or scale claim is made

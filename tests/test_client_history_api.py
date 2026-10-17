@@ -120,6 +120,10 @@ def test_client_status_history_and_cursor_feed_are_isolated_and_sanitized(
     assert (
         api_client.get(f"/v1/admin/jobs/{visible.id}/versions", headers=headers).status_code == 404
     )
+    assert (
+        api_client.get(f"/v1/jobs/{visible.id}/operational-history", headers=headers).status_code
+        == 404
+    )
 
     first = api_client.get("/v1/client/updates?limit=1", headers=headers)
     assert first.status_code == 200
@@ -151,3 +155,7 @@ def test_client_status_history_and_cursor_feed_are_isolated_and_sanitized(
     assert len(history.json()) == 2
     assert all("actor_user_id" not in entry for entry in history.json())
     assert all("reason" not in entry for entry in history.json())
+    assert (
+        api_client.get("/v1/client/updates", headers=headers, params={"cursor": "%%%"}).status_code
+        == 422
+    )

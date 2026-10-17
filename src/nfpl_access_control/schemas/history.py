@@ -11,7 +11,11 @@ from nfpl_access_control.services.client_updates import (
     ClientShipmentStatus,
     ClientShipmentUpdate,
 )
-from nfpl_access_control.services.history import HistoricalEligibilityResult, VersionDiff
+from nfpl_access_control.services.history import (
+    HistoricalEligibilityResult,
+    OperationalHistoryItem,
+    VersionDiff,
+)
 
 
 class JobVersionResponse(BaseModel):
@@ -47,6 +51,28 @@ class AuditEventResponse(BaseModel):
     authorization_context: dict[str, object]
     affected_job_version: int | None
     denied: bool
+
+
+class OperationalHistoryResponse(BaseModel):
+    version_number: int
+    occurred_at: datetime
+    actor_user_id: str
+    action: str
+    reason: str
+    stage: JobStage
+    changed_fields: list[str]
+
+    @classmethod
+    def from_item(cls, item: OperationalHistoryItem) -> OperationalHistoryResponse:
+        return cls(
+            version_number=item.version_number,
+            occurred_at=item.occurred_at,
+            actor_user_id=item.actor_user_id,
+            action=item.action,
+            reason=item.reason,
+            stage=item.stage,
+            changed_fields=list(item.changed_fields),
+        )
 
 
 class HistoricalCandidateResponse(BaseModel):

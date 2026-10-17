@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -204,5 +205,5 @@ class ClientUpdateService:
             if occurred_at.tzinfo is None or not version_id:
                 raise ValueError
             return occurred_at, version_id
-        except (ValueError, UnicodeDecodeError) as error:
+        except (binascii.Error, ValueError, UnicodeDecodeError) as error:
             raise ClientCursorError("The update cursor is invalid.") from error

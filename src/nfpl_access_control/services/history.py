@@ -55,6 +55,17 @@ class ActualHistoryEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class OperationalHistoryItem:
+    version_number: int
+    occurred_at: datetime
+    actor_user_id: str
+    action: str
+    reason: str
+    stage: JobStage
+    changed_fields: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class HistoricalEligibilityResult:
     evaluated_at: datetime
     permission: Permission
@@ -140,6 +151,57 @@ class HistoryService:
                 changed.append(version)
             previous = value
         return changed
+
+    def operational_history(
+        self,
+        job_id: str,
+        *,
+        before_version: int | None = None,
+        limit: int = 50,
+    ) -> list[OperationalHistoryItem]:
+        if not 1 <= limit <= 100:
+            raise HistoryValidationError("History limit must be between 1 and 100.")
+        statement = select(JobVersion).where(JobVersion.job_id == job_id)
+        if before_version is not None:
+            statement = statement.where(JobVersion.version_number < before_version)
+        versions = list(
+            self.session.scalars(
+                statement.order_by(JobVersion.version_number.desc()).limit(limit + 1)
+            )
+        )
+        result: list[OperationalHistoryItem] = []
+        for index, version in enumerate(versions[:limit]):
+            previous = versions[index + 1] if index + 1 < len(versions) else None
+            fields = set(version.snapshot)
+            if previous is not None:
+                fields.update(previous.snapshot)
+                changed = tuple(
+                    sorted(
+                        field
+                        for field in fields
+                        if version.snapshot.get(field) != previous.snapshot.get(field)
+                    )
+                )
+            else:
+                changed = tuple(sorted(fields))
+            try:
+                stage = JobStage(str(version.snapshot["stage"]))
+            except (KeyError, ValueError) as error:
+                raise HistoryValidationError(
+                    "The operational history contains invalid stage data."
+                ) from error
+            result.append(
+                OperationalHistoryItem(
+                    version_number=version.version_number,
+                    occurred_at=version.recorded_at,
+                    actor_user_id=version.actor_user_id,
+                    action=version.action,
+                    reason=version.reason,
+                    stage=stage,
+                    changed_fields=changed,
+                )
+            )
+        return result
 
     def historical_eligibility(
         self,

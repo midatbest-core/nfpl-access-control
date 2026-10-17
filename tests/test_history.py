@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from nfpl_access_control.authorization import ReasonCode
 from nfpl_access_control.authorization.roles import CHECKER_ROLE, MAKER_ROLE
 from nfpl_access_control.models import (
     AuditEvent,
@@ -19,11 +20,12 @@ from nfpl_access_control.models import (
     Permission,
     ResponsibilityEventType,
     ResponsibilityType,
+    RoleAssignmentEvent,
     User,
 )
 from nfpl_access_control.services.history import HistoryService
 from nfpl_access_control.services.role_management import RoleManagementService
-from nfpl_access_control.services.workflow import WorkflowService
+from nfpl_access_control.services.workflow import WorkflowError, WorkflowService
 from tests.test_authorization import _scope
 from tests.test_workflow import NOW, _assign_core, _grant, _setup, _user
 
@@ -409,3 +411,45 @@ def test_role_assignment_events_are_append_only(session: Session) -> None:
     session.delete(event)
     with pytest.raises(RuntimeError, match="append-only"):
         session.flush()
+
+
+def test_stale_version_and_invalid_stage_denials_are_audited(session: Session) -> None:
+    values = _versioned_setup(session)
+    maker = values["maker"]
+    filer = values["filer"]
+    job = values["job"]
+    assert isinstance(maker, User) and isinstance(filer, User) and isinstance(job, Job)
+    service = WorkflowService(session)
+
+    with pytest.raises(WorkflowError) as stale:
+        service.prepare(
+            actor=maker,
+            job=job,
+            checklist_data={"complete": True},
+            expected_version=job.version + 1,
+            now=NOW + timedelta(minutes=1),
+        )
+    assert stale.value.decision.reason_code is ReasonCode.STALE_VERSION
+
+    with pytest.raises(WorkflowError) as invalid_stage:
+        service.file(
+            actor=filer,
+            job=job,
+            expected_version=job.version,
+            now=NOW + timedelta(minutes=2),
+        )
+    assert invalid_stage.value.decision.reason_code is ReasonCode.INVALID_STAGE
+
+    denials = list(
+        session.scalars(
+            select(AuditEvent)
+            .where(AuditEvent.job_id == job.id, AuditEvent.denied.is_(True))
+            .order_by(AuditEvent.occurred_at)
+        )
+    )
+    assert [(item.action, item.authorization_context["reason_code"]) for item in denials] == [
+        ("job.prepare.denied", ReasonCode.STALE_VERSION.value),
+        ("job.file.denied", ReasonCode.INVALID_STAGE.value),
+    ]
+    assert all(item.affected_job_version == job.version for item in denials)
+    assert len(HistoryService(session).list_versions(job.id)) == 1

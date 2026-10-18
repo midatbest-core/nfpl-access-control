@@ -180,6 +180,9 @@ export function AppShell() {
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 lg:block">{sidebar}</aside>
       {mobileOpen && <div className="fixed inset-0 z-40 lg:hidden"><button aria-label="Close navigation" className="absolute inset-0 bg-slate-950/50" onClick={() => setMobileOpen(false)} /><aside className="relative h-full w-72 shadow-2xl">{sidebar}</aside></div>}
       <div className="lg:pl-64">
+        <div className="bg-red-600 px-4 py-2.5 text-center text-xs sm:text-sm font-black uppercase tracking-wider text-white shadow-md">
+          ⚠️ WARNING: DO NOT USE THIS VERSION (/frontend) — PLEASE USE FRONTEND V2 (/frontend-v2) INSTEAD
+        </div>
         <header className="sticky top-0 z-20 flex h-18 items-center gap-4 border-b border-slate-200/80 bg-white/95 px-4 backdrop-blur sm:px-6 lg:px-8">
           <button type="button" className="grid h-10 w-10 place-items-center rounded-xl text-slate-600 hover:bg-slate-100 lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M4 12h16M4 17h16" /></svg>

@@ -117,18 +117,20 @@ describe('final evaluator workflow refinements', () => {
     storedSession('client-session')
     const client = profile(['client-viewer'], {
       kind: 'client', client_id: 'client-1', client_name: 'Oriana Textiles',
-    })
+    } as any)
     let queryBody: Record<string, unknown> | undefined
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
       const url = String(input)
       if (url.endsWith('/v1/identity/me')) return jsonResponse(client)
-      if (url.endsWith('/v1/client/jobs/job-client')) {
+      if (url.endsWith('/v1/jobs/job-client') || url.endsWith('/v1/client/jobs/job-client')) {
         return jsonResponse({ id: 'job-client', reference: 'NFPL-501', client_id: 'client-1', direction: 'import', mode: 'air', stage: 'confirmed', version: 2 })
       }
       if (url.endsWith('/v1/client/jobs/job-client/status')) {
         return jsonResponse({ job_id: 'job-client', reference: 'NFPL-501', stage: 'confirmed', progress_percent: 20, updated_at: '2026-10-18T08:00:00Z', version: 2 })
       }
       if (url.includes('/v1/client/jobs/job-client/history?')) return jsonResponse([])
+      if (url.includes('/v1/notifications')) return jsonResponse([])
+      if (url.endsWith('/v1/notifications/unread-count')) return jsonResponse({ count: 0 })
       if (url.endsWith('/v1/client/jobs/job-client/queries') && method(options) === 'POST') {
         queryBody = JSON.parse(String(options?.body)) as Record<string, unknown>
         return jsonResponse({ audit_event_id: 'audit-1', delivered: 1 }, 201)

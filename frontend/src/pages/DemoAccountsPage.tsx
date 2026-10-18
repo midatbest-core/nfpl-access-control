@@ -13,6 +13,22 @@ const accounts = [
 export function DemoAccountsPage() {
   return <main className="min-h-screen bg-canvas px-5 py-10 sm:px-8">
     <div className="mx-auto max-w-5xl">
+      <div className="mb-8 rounded-2xl border-4 border-red-600 bg-red-50 p-6 text-red-950 shadow-2xl ring-4 ring-red-400/40">
+        <div className="flex items-center gap-3">
+          <span className="text-3xl sm:text-4xl">⚠️</span>
+          <div>
+            <h2 className="text-xl sm:text-2xl font-black uppercase tracking-tight text-red-700">
+              WARNING: DO NOT USE THIS VERSION
+            </h2>
+            <p className="text-xs font-bold uppercase tracking-wider text-red-800">
+              Legacy Prototype (/frontend) is Deprecated &amp; Not Useful
+            </p>
+          </div>
+        </div>
+        <p className="mt-3 text-sm font-semibold text-red-950">
+          This basic demo page is part of the early deprecated prototype. Please run and evaluate <strong>Frontend V2</strong> (<code className="rounded bg-red-200/80 px-1 py-0.5 font-mono text-xs">/frontend-v2</code>) which features the complete modern Evaluator Persona Quick-Switch, interactive visual workflows, and audit feeds.
+        </p>
+      </div>
       <Link className="inline-flex items-center gap-2 text-sm font-semibold text-teal-700" to="/login"><span aria-hidden="true">←</span> Back to sign in</Link>
       <header className="mt-7 max-w-3xl"><p className="text-xs font-bold uppercase tracking-[0.2em] text-coral">One-day evaluation</p><h1 className="mt-3 font-display text-4xl font-bold tracking-tight text-ink">Explore NFPL by role</h1><p className="mt-3 text-base leading-7 text-slate-600">Use the deliberately fictional seed accounts to follow a shipment from preparation through client-safe tracking. Every account still obeys its real backend authorization scope.</p></header>
       {!enabled ? <section className="summary-card mt-8"><h2 className="text-lg font-semibold">Demo directory is disabled</h2><p className="mt-2 text-sm leading-6 text-slate-600">This deployment has not explicitly enabled the evaluator directory. Set the documented Vite demo flag only for a disposable demo environment.</p></section> : <>

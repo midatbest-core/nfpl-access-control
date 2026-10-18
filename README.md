@@ -5,6 +5,18 @@
 * **Official Design Document (2–4 Pages):** [NFPL Access Control — System Design Document](https://docs.google.com/document/d/1CXhjgqobfmPf3qqq2D8AbXM_bI7SYxaYGbs-hsZCZTQ/edit?tab=t.0)
 * **AI Assistance Disclosure:** [`LLM.md`](file:///c:/Users/Admin/rbac/LLM.md)
 
+> [!CAUTION]
+> ## 🚨 CRITICAL EVALUATOR NOTICE: USE `frontend-v2/` (DEFAULT FRONTEND)
+> **The default, official, and complete web client is located in [`frontend-v2/`](file:///c:/Users/Admin/rbac/frontend-v2/).**  
+> **DO NOT USE the basic `frontend/` folder.** The original `frontend/` directory contains an early, superseded prototype that is **deprecated and not useful**. For all evaluation, operational testing, and assessment reviews, **always use `frontend-v2/`**:
+> ```bash
+> cd frontend-v2
+> npm install
+> npm run dev
+> # Open http://localhost:5173
+> ```
+> All modern operational workflows, interactive evaluator role-switchers, visual audit timelines, and checklist interfaces live exclusively in **`frontend-v2/`**.
+
 > **Evaluator Quick Access:**  
 > **Shared Evaluation Demo Password:** `123123123123`  
 > Pre-seeded interactive personas (Admin, Maker, Checker, Filing Officer, Client Viewer) are ready for immediate evaluation in both the local and cloud environments. See [Chapter 7](#chapter-7--sample-data-meet-the-fictional-nfpl-team) for the full account directory.
@@ -123,7 +135,7 @@ The solution is built as a clean Python 3.12+ modular monolith with a modern Typ
 * **Storage Engines:**
   * **Local Development:** Zero-friction SQLite with foreign-key enforcement enabled on every connection (`PRAGMA foreign_keys=ON`).
   * **Production / Staging:** Cloud-managed PostgreSQL (Neon) with small bounded connection pools (5 connections, 0 overflow) and strict SSL mode.
-* **Frontend V2 Client:** React 19, TypeScript, Vite, Tailwind CSS, and native fetch client with zero heavy state-management libraries.
+* **Frontend V2 Client (Default):** React 19, TypeScript, Vite, Tailwind CSS, and native fetch client located in [`frontend-v2/`](file:///c:/Users/Admin/rbac/frontend-v2/) (the basic legacy `frontend/` folder is deprecated and not useful).
 * **Cryptographic Security:** Passwords hashed with uniquely salted memory-hard **scrypt** ($N=16384, r=8, p=1$). Authentication creates expiring 8-hour server-side sessions stored only as SHA-256 digests. Five failed login attempts trigger an automatic 15-minute account lockout.
 * **Zero-Cost Deployment:** No Celery, Redis, external policy agents, message brokers, or paid schedulers. All queue filtering, delegation expiry, and policy checks run synchronously inside database transactions.
 
@@ -394,8 +406,8 @@ uvicorn nfpl_access_control.main:app --host 127.0.0.1 --port 8000 --reload
 * **API Endpoint:** `http://127.0.0.1:8000`
 * **Interactive OpenAPI Swagger Docs:** `http://127.0.0.1:8000/docs`
 
-#### 4. Start the Frontend V2 Client
-In a separate terminal window:
+#### 4. Start the Frontend V2 Client (Default)
+In a separate terminal window (**always launch `frontend-v2/`**, do not use the basic legacy `frontend/` folder):
 ```bash
 cd frontend-v2
 npm install

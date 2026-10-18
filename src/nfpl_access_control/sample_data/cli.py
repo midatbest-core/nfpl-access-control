@@ -5,8 +5,8 @@ Two modes, both deterministic and idempotent:
 * ``standard``  -> rich 5/10/20/300-500 dataset with full edge cases (JSON/CSV)
 * ``benchmark`` -> streamed 500-employee / 200,000-job dataset (NDJSON/CSV)
 
-Generation writes flat files. The explicit seed-demo command is the only mode
-that connects to a database, and it accepts SQLite disposable targets only.
+Generation writes flat files. Database imports use separate, explicit commands
+for disposable SQLite and PostgreSQL targets.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from pathlib import Path
 from alembic.config import Config
 
 from alembic import command
+from nfpl_access_control.core.config import normalize_database_url
 from nfpl_access_control.db.session import create_database_engine
 from nfpl_access_control.sample_data.benchmark import (
     BENCHMARK_STREAMS,
@@ -70,6 +71,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--confirm-disposable",
         action="store_true",
         help="confirm that the target is disposable and contains no data to preserve",
+    )
+
+    postgres_seed = sub.add_parser(
+        "seed-postgres",
+        help="seed an empty, migrated, explicitly disposable PostgreSQL database",
+    )
+    postgres_seed.add_argument(
+        "--confirm-disposable-postgres",
+        action="store_true",
+        help="confirm that DATABASE_URL targets disposable PostgreSQL with no data to preserve",
     )
     return parser
 
@@ -140,12 +151,38 @@ def _run_seed(args: argparse.Namespace) -> None:
     )
 
 
+def _run_postgres_seed(args: argparse.Namespace) -> None:
+    if not args.confirm_disposable_postgres:
+        raise SampleImportError("seed-postgres requires --confirm-disposable-postgres.")
+    raw_database_url = os.getenv("DATABASE_URL")
+    if raw_database_url is None or not raw_database_url.strip():
+        raise SampleImportError("Set DATABASE_URL through the process environment.")
+    database_url = normalize_database_url(raw_database_url.strip())
+    if not database_url.startswith("postgresql+psycopg://"):
+        raise SampleImportError("seed-postgres accepts a PostgreSQL DATABASE_URL only.")
+    password = os.getenv("NFPL_DEMO_PASSWORD")
+    if password is None:
+        raise SampleImportError("Set NFPL_DEMO_PASSWORD through the process environment.")
+
+    engine = create_database_engine(database_url)
+    try:
+        result = import_dataset(engine, DatasetBuilder().build(), demo_password=password)
+    finally:
+        engine.dispose()
+    print(
+        f"Seeded {result.total_rows} rows into confirmed disposable PostgreSQL; "
+        "the database URL and plaintext credentials were not printed."
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     args = _build_parser().parse_args(argv)
     if args.mode == "standard":
         _run_standard(args)
     elif args.mode == "benchmark":
         _run_benchmark(args)
+    elif args.mode == "seed-postgres":
+        _run_postgres_seed(args)
     else:
         _run_seed(args)
 

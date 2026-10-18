@@ -158,9 +158,13 @@ responses. All pagination cursors remain opaque to the browser.
 
 Phase 7 sample data is generated only by the explicit
 nfpl_access_control.sample_data CLI. Standard seeds target an empty,
-fully migrated, explicitly disposable SQLite file; they must never touch the
-default local database or run at application startup. Import is atomic,
-schema-checked, foreign-key checked, and refuses reruns into populated data.
+fully migrated, explicitly disposable database; they must never touch the
+default local database or run at application startup. SQLite seeding remains
+file-only and refuses nfpl.db. PostgreSQL seeding reads DATABASE_URL only from
+the environment, requires its PostgreSQL-specific disposable confirmation,
+does not run migrations, and requires exact Alembic head 20261017_0007. Import
+is atomic, schema-checked, never deletes data, and refuses reruns into populated
+data; SQLite additionally runs its explicit foreign-key check.
 Demo passwords enter through NFPL_DEMO_PASSWORD, are stored only as unique
 scrypt encodings, are never printed, and are not issued to service identities.
 The 500-employee/200,000-job dataset is streamed to files and is never loaded

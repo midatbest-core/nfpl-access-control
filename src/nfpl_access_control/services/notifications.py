@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from nfpl_access_control.authorization import AuthorizationEngine
+from nfpl_access_control.authorization import AuthorizationEngine, Scope
 from nfpl_access_control.authorization.roles import CLIENT_VIEWER_ROLE
 from nfpl_access_control.models import (
     AccountStatus,
@@ -197,6 +197,88 @@ class NotificationService:
         ]
         return [item for item in notifications if item is not None]
 
+    def notify_admins(
+        self,
+        *,
+        actor: User,
+        job: Job,
+        event_type: str,
+        message: str,
+        event_key: str,
+        now: datetime,
+    ) -> list[Notification]:
+        engine = AuthorizationEngine(self.session)
+        recipients = self.session.scalars(
+            select(User).where(
+                User.kind == UserKind.STAFF,
+                User.account_status == AccountStatus.ACTIVE,
+                User.is_active.is_(True),
+            )
+        )
+        notifications = [
+            self.create(
+                actor=actor,
+                recipient_user_id=recipient.id,
+                event_type=event_type,
+                message=message,
+                target_path=f"/v1/jobs/{job.id}",
+                dedupe_key=f"{event_key}:{recipient.id}",
+                job=job,
+                now=now,
+            )
+            for recipient in recipients
+            if engine.authorize_admin(
+                recipient,
+                Permission.JOB_UPDATE,
+                requested_scope=Scope.for_job(job),
+                at=now,
+            ).allowed
+        ]
+        return [item for item in notifications if item is not None]
+
+    def notify_job_staff(
+        self,
+        *,
+        actor: User,
+        job: Job,
+        message: str,
+        event_key: str,
+        now: datetime,
+    ) -> list[Notification]:
+        recipient_ids = set(
+            self.session.scalars(
+                select(JobResponsibility.user_id).where(
+                    JobResponsibility.job_id == job.id,
+                    JobResponsibility.user_id.is_not(None),
+                )
+            )
+        )
+        recipient_ids.update(
+            self.session.scalars(
+                select(JobDelegation.delegate_user_id).where(
+                    JobDelegation.job_id == job.id,
+                    JobDelegation.valid_from <= now,
+                    JobDelegation.valid_until > now,
+                    or_(JobDelegation.revoked_at.is_(None), JobDelegation.revoked_at > now),
+                )
+            )
+        )
+        notifications = [
+            self.create(
+                actor=actor,
+                recipient_user_id=recipient_id,
+                event_type="admin_attention",
+                message=message,
+                target_path=f"/v1/jobs/{job.id}",
+                dedupe_key=f"{event_key}:{recipient_id}",
+                job=job,
+                now=now,
+            )
+            for recipient_id in sorted(recipient_ids)
+            if recipient_id is not None and recipient_id != actor.id
+        ]
+        return [item for item in notifications if item is not None]
+
     def list_for_actor(
         self,
         *,
@@ -251,6 +333,32 @@ class NotificationService:
         if actor.kind is UserKind.CLIENT:
             statement = statement.where(Notification.is_client_safe.is_(True))
         return int(self.session.scalar(statement) or 0)
+
+    def mark_all_read(self, *, actor: User, now: datetime | None = None) -> int:
+        current_time = now or datetime.now(UTC)
+        visible_job = AuthorizationEngine.job_scope_predicate(
+            actor, Permission.JOB_VIEW, at=current_time
+        )
+        statement = (
+            select(Notification.id)
+            .outerjoin(Job, Job.id == Notification.job_id)
+            .where(
+                Notification.recipient_user_id == actor.id,
+                Notification.read_at.is_(None),
+                or_(Notification.job_id.is_(None), and_(Job.id.is_not(None), visible_job)),
+            )
+        )
+        if actor.kind is UserKind.CLIENT:
+            statement = statement.where(Notification.is_client_safe.is_(True))
+        notification_ids = list(self.session.scalars(statement))
+        if not notification_ids:
+            return 0
+        result = self.session.execute(
+            update(Notification)
+            .where(Notification.id.in_(notification_ids))
+            .values(read_at=current_time)
+        )
+        return int(result.rowcount or 0)
 
     def mark_read(
         self, *, actor: User, notification_id: str, now: datetime | None = None

@@ -63,7 +63,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [endSession, session, user])
 
   const login = useCallback(async (credentials: LoginRequest) => {
-    setIsLoading(true)
     try {
       const result = await api.login(credentials)
       const nextSession = { token: result.access_token, expiresAt: result.expires_at }
@@ -77,8 +76,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(null)
       setUser(null)
       throw error
-    } finally {
-      setIsLoading(false)
     }
   }, [])
 

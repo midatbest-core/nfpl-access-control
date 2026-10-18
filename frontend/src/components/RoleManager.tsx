@@ -39,6 +39,7 @@ export function RoleManager({
   const [revokeReason, setRevokeReason] = useState('')
   const [revokeTarget, setRevokeTarget] = useState<RoleAssignment>()
   const [confirmRevoke, setConfirmRevoke] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
@@ -47,6 +48,27 @@ export function RoleManager({
       setError('A reason is required.')
       return
     }
+    const now = Date.now()
+    const duplicate = employee.roles.some((assignment) => (
+      assignment.role_slug === role
+      && assignment.client_id === (clientId || null)
+      && assignment.all_clients === !clientId
+      && assignment.branch_id === (branchId || null)
+      && assignment.all_branches === !branchId
+      && assignment.direction === (direction || null)
+      && assignment.all_directions === !direction
+      && assignment.mode === (mode || null)
+      && assignment.all_modes === !mode
+      && !assignment.revoked_at
+      && (!assignment.valid_until || Date.parse(assignment.valid_until) > now)
+    ))
+    if (duplicate) {
+      setError(
+        'This employee already has the same active role and scope. Choose a different scope, or revoke the existing assignment first.',
+      )
+      return
+    }
+    setSubmitting(true)
     try {
       await api.grantRole(token, {
         target_user_id: employee.id,
@@ -69,6 +91,8 @@ export function RoleManager({
       onChanged()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Role grant failed.')
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -115,7 +139,7 @@ export function RoleManager({
           <option value="">All modes</option><option value="air">Air</option><option value="fcl">FCL</option><option value="lcl">LCL</option>
         </select>
       </div>
-      <button className="button-primary mt-3" type="button" onClick={() => void grant()}>Grant scoped role</button>
+      <button className="button-primary mt-3" type="button" disabled={submitting} onClick={() => void grant()}>{submitting ? 'Granting role...' : 'Grant scoped role'}</button>
       <div className="mt-3 space-y-2">
         {employee.roles.length === 0 && <p className="text-xs text-slate-500">No role assignments.</p>}
         {employee.roles.map((item) => (

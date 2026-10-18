@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import or_, select
@@ -61,6 +62,14 @@ class AbsenceValidationError(ValueError):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class AbsenceCandidate:
+    user_id: str
+    display_name: str
+    eligible_assignment_count: int
+    total_assignment_count: int
+
+
 def has_effective_absence(session: Session, user: User, at: datetime) -> bool:
     if user.availability is EmployeeAvailability.ABSENT:
         return True
@@ -87,6 +96,87 @@ class AbsenceService:
         self.authorization = AuthorizationEngine(session)
         self.audit = AuditService(session)
         self.notifications = NotificationService(session)
+
+    def candidates(self, actor: User, limit: int = 50) -> list[AbsenceCandidate]:
+        current_time = self._time(None)
+        return self._candidate_summaries(actor, current_time, limit)
+
+    def _candidate_summaries(
+        self, actor: User, current_time: datetime, limit: int
+    ) -> list[AbsenceCandidate]:
+        if limit not in range(1, 101):
+            raise AbsenceValidationError("Candidate limit is invalid.")
+        if actor.kind is not UserKind.STAFF or actor.account_status is not AccountStatus.ACTIVE:
+            raise AbsenceValidationError("Only an active employee can view candidates.")
+        assignments = list(
+            self.session.execute(
+                select(JobResponsibility, Job)
+                .join(Job, Job.id == JobResponsibility.job_id)
+                .where(
+                    JobResponsibility.user_id == actor.id,
+                    Job.stage.in_(ACTIVE_JOB_STAGES),
+                    Job.archived_at.is_(None),
+                )
+            ).all()
+        )
+        return self._rank_candidates(actor, assignments, current_time, limit)
+
+    def _rank_candidates(
+        self,
+        actor: User,
+        assignments: list[tuple[JobResponsibility, Job]],
+        current_time: datetime,
+        limit: int,
+    ) -> list[AbsenceCandidate]:
+        employees = self.session.scalars(
+            select(User).where(
+                User.id != actor.id,
+                User.kind == UserKind.STAFF,
+                User.account_status == AccountStatus.ACTIVE,
+                User.is_active.is_(True),
+                User.availability != EmployeeAvailability.ABSENT,
+            )
+        )
+        candidates: list[AbsenceCandidate] = []
+        for employee in employees:
+            if has_effective_absence(self.session, employee, current_time):
+                continue
+            candidates.append(self._candidate(employee, assignments, current_time))
+        return self._sort_candidates(candidates, bool(assignments), limit)
+
+    def _candidate(
+        self,
+        employee: User,
+        assignments: list[tuple[JobResponsibility, Job]],
+        current_time: datetime,
+    ) -> AbsenceCandidate:
+        eligible_count = sum(
+            self._eligibility(employee, job, responsibility.responsibility, current_time)[0]
+            is AbsenceJobOutcome.DELEGATED
+            for responsibility, job in assignments
+        )
+        return AbsenceCandidate(
+            user_id=employee.id,
+            display_name=employee.display_name,
+            eligible_assignment_count=eligible_count,
+            total_assignment_count=len(assignments),
+        )
+
+    @staticmethod
+    def _sort_candidates(
+        candidates: list[AbsenceCandidate], has_assignments: bool, limit: int
+    ) -> list[AbsenceCandidate]:
+        eligible = [
+            item for item in candidates if not has_assignments or item.eligible_assignment_count > 0
+        ]
+        return sorted(
+            eligible,
+            key=lambda item: (
+                -item.eligible_assignment_count,
+                item.display_name.casefold(),
+                item.user_id,
+            ),
+        )[:limit]
 
     def nominate(
         self,

@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nfpl_access_control.authorization.roles import ADMIN_ROLE
+from nfpl_access_control.authorization.roles import ADMIN_ROLE, MAKER_ROLE
 from nfpl_access_control.models import (
     Branch,
     Client,
@@ -14,6 +14,7 @@ from nfpl_access_control.models import (
     Role,
     RoleAssignment,
     User,
+    UserKind,
 )
 from tests.conftest import TEST_TOKEN
 
@@ -110,3 +111,61 @@ def test_global_admin_can_create_safe_role_through_authenticated_api(
     assert response.status_code == 201
     assert response.json()["slug"] == "operations-reviewer"
     assert set(response.json()["permissions"]) == {"job:view", "job:file"}
+
+
+def test_duplicate_scoped_grant_returns_precise_conflict_explanation(
+    api_client: TestClient, session: Session, active_user: User
+) -> None:
+    now = datetime.now(UTC)
+    admin_role = session.scalar(select(Role).where(Role.slug == ADMIN_ROLE))
+    maker_role = session.scalar(select(Role).where(Role.slug == MAKER_ROLE))
+    assert admin_role is not None and maker_role is not None
+    target = User(
+        email="duplicate-grant@example.test",
+        display_name="Duplicate Grant",
+        kind=UserKind.STAFF,
+    )
+    session.add(target)
+    session.flush()
+    for user, role in ((active_user, admin_role), (target, maker_role)):
+        session.add(
+            RoleAssignment(
+                user_id=user.id,
+                role_id=role.id,
+                all_clients=True,
+                client_id=None,
+                all_branches=True,
+                branch_id=None,
+                all_directions=True,
+                direction=None,
+                all_modes=True,
+                mode=None,
+                valid_from=now - timedelta(minutes=1),
+                granted_by_user_id=active_user.id,
+                grant_reason="trusted test setup",
+            )
+        )
+    session.commit()
+
+    response = api_client.post(
+        "/v1/admin/role-assignments",
+        headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+        json={
+            "target_user_id": target.id,
+            "role_slug": MAKER_ROLE,
+            "reason": "Duplicate grant attempt",
+            "scope": {
+                "all_clients": True,
+                "client_id": None,
+                "all_branches": True,
+                "branch_id": None,
+                "all_directions": True,
+                "direction": None,
+                "all_modes": True,
+                "mode": None,
+            },
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "An overlapping identical role assignment already exists."

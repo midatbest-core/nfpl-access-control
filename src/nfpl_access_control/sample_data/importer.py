@@ -84,6 +84,13 @@ def _assert_migrated(connection: object) -> None:
 
 def _assert_system_roles(session: Session) -> None:
     roles = {role.slug: role for role in session.scalars(select(Role))}
+    expected_slugs = {definition.slug for definition in SYSTEM_ROLES}
+    unexpected_slugs = set(roles) - expected_slugs
+    if unexpected_slugs:
+        raise SampleImportError(
+            "Refusing to seed a database containing application-defined roles: "
+            + ", ".join(sorted(unexpected_slugs))
+        )
     for definition in SYSTEM_ROLES:
         role = roles.get(definition.slug)
         if role is None or role.id != definition.id or not role.is_system:

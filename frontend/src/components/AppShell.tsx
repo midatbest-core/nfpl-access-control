@@ -1,9 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 import { useAuth } from '../auth/AuthContext'
 import { effectiveRoles, ROLE } from '../auth/roles'
+import { api } from '../api/client'
+import type { Notification } from '../api/contracts'
+import { requestWorkspaceRefresh, WORKSPACE_REFRESH_EVENT } from '../events/workspace'
 import { ConfirmationDialog, NotificationBell } from './Controls'
 import { StatusBadge } from './StatusBadge'
 
@@ -18,18 +21,21 @@ const adminItems: NavigationItem[] = [
   { label: 'Jobs', to: '/admin/jobs', section: 'Admin' },
   { label: 'Employees', to: '/admin/employees', section: 'Admin' },
   { label: 'Urgent requests', to: '/admin/requests', section: 'Admin' },
+  { label: 'Jobs requiring attention', to: '/admin/attention', section: 'Admin' },
   { label: 'Notifications', to: '/notifications', section: 'Admin' },
   { label: 'Audit history', to: '/admin/audit', section: 'Admin' },
 ]
 
 const operationsItems: NavigationItem[] = [
   { label: 'My work', to: '/work', section: 'Operations' },
+  { label: 'Absence & cover', to: '/absence', section: 'Operations' },
   { label: 'Notifications', to: '/notifications', section: 'Operations' },
 ]
 
 const clientItems: NavigationItem[] = [
   { label: 'My shipments', to: '/client/shipments', section: 'Client' },
   { label: 'Recent updates', to: '/client/updates', section: 'Client' },
+  { label: 'Notifications', to: '/notifications', section: 'Client' },
 ]
 
 function Logo() {
@@ -62,11 +68,16 @@ function Navigation({ items, onNavigate }: { items: NavigationItem[]; onNavigate
 }
 
 export function AppShell() {
-  const { user, logout } = useAuth()
+  const { token, user, logout } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [confirmLogout, setConfirmLogout] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [toasts, setToasts] = useState<Notification[]>([])
+  const seenNotifications = useRef(new Set<string>())
+  const pollingStarted = useRef(false)
+  const toastTimers = useRef<number[]>([])
   const roles = useMemo(() => effectiveRoles(user), [user])
   const navigation = useMemo(() => {
     const items: NavigationItem[] = []
@@ -75,12 +86,83 @@ export function AppShell() {
     if (roles.has(ROLE.clientViewer)) items.push(...clientItems)
     return items.filter((item, index) => items.findIndex((candidate) => candidate.to === item.to) === index)
   }, [roles])
-  const activeLabel = navigation.find((item) => item.to === location.pathname)?.label ?? 'NFPL Operations'
+  const activeItem = navigation.find((item) => item.to === location.pathname)
+    ?? [...navigation]
+      .sort((left, right) => right.to.length - left.to.length)
+      .find((item) => location.pathname.startsWith(`${item.to}/`))
+  const activeLabel = activeItem?.label ?? 'NFPL Operations'
+
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    const seen = seenNotifications.current
+    async function poll() {
+      try {
+        const unreadItems = await api.notifications(token!, undefined, true)
+        if (!active) return
+        const fresh = unreadItems.filter((item) => !seen.has(item.id))
+        unreadItems.forEach((item) => seen.add(item.id))
+        if (pollingStarted.current && fresh.length > 0) {
+          setToasts((current) => [...current, ...fresh].slice(-4))
+          fresh.forEach((item) => {
+            const timer = window.setTimeout(() => {
+              setToasts((current) => current.filter((toast) => toast.id !== item.id))
+            }, 7000)
+            toastTimers.current.push(timer)
+          })
+          window.dispatchEvent(new Event(WORKSPACE_REFRESH_EVENT))
+        }
+        pollingStarted.current = true
+        if (unreadItems.length < 25) {
+          setUnreadCount(unreadItems.length)
+        } else {
+          const count = await api.unreadNotificationCount(token!)
+          if (active) setUnreadCount(count.count)
+        }
+      } catch {
+        // Protected 401 handling is centralized by the API client.
+      }
+    }
+    void poll()
+    const interval = window.setInterval(() => void poll(), 20_000)
+    const refresh = () => void poll()
+    window.addEventListener(WORKSPACE_REFRESH_EVENT, refresh)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+      window.removeEventListener(WORKSPACE_REFRESH_EVENT, refresh)
+      toastTimers.current.forEach((timer) => window.clearTimeout(timer))
+      toastTimers.current = []
+      pollingStarted.current = false
+      seen.clear()
+    }
+  }, [token])
 
   async function handleLogout() {
     setConfirmLogout(false)
     await logout()
     navigate('/login', { replace: true })
+  }
+
+  async function openToast(item: Notification) {
+    setToasts((current) => current.filter((toast) => toast.id !== item.id))
+    try {
+      await api.markNotificationRead(token!, item.id)
+    } catch {
+      // Opening the authorized destination remains useful if the read receipt
+      // races with a session or network refresh. The notifications page can retry it.
+    } finally {
+      requestWorkspaceRefresh()
+    }
+    if (!item.job_id) {
+      navigate('/notifications')
+    } else if (user?.kind === 'client') {
+      navigate(`/client/shipments/${item.job_id}`)
+    } else if (roles.has(ROLE.admin)) {
+      navigate(`/admin/jobs/${item.job_id}`)
+    } else {
+      navigate(`/work/jobs/${item.job_id}`)
+    }
   }
 
   const sidebar = (
@@ -103,7 +185,7 @@ export function AppShell() {
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
           </button>
           <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-ink">{activeLabel}</p><p className="hidden truncate text-xs text-slate-500 sm:block">Secure shipment access workspace</p></div>
-          <NotificationBell onClick={() => navigate('/notifications')} />
+          <NotificationBell count={unreadCount} onClick={() => navigate('/notifications')} />
           <div className="hidden h-8 w-px bg-slate-200 sm:block" />
           <div className="hidden min-w-0 items-center gap-3 sm:flex">
             <div className="grid h-9 w-9 place-items-center rounded-full bg-teal-50 text-sm font-bold text-teal-800">{user?.display_name.slice(0, 1).toUpperCase()}</div>
@@ -113,6 +195,15 @@ export function AppShell() {
         <main className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-8 lg:py-9"><Outlet /></main>
       </div>
       <ConfirmationDialog open={confirmLogout} title="Sign out of NFPL?" message="You will need to enter your credentials again to return to your workspace." confirmLabel="Sign out" dangerous onConfirm={() => void handleLogout()} onCancel={() => setConfirmLogout(false)} />
+      <section className="fixed bottom-4 right-4 z-50 w-[min(24rem,calc(100vw-2rem))] space-y-3" aria-label="New notifications" aria-live="polite">
+        {toasts.map((item) => (
+          <button key={item.id} type="button" onClick={() => void openToast(item)} className="w-full rounded-2xl border border-teal-200 bg-white p-4 text-left shadow-xl shadow-slate-900/10 transition hover:-translate-y-0.5">
+            <span className="text-xs font-bold uppercase tracking-[0.16em] text-teal-700">New notification</span>
+            <span className="mt-1 block text-sm font-semibold text-ink">{item.message}</span>
+            <span className="mt-2 block text-xs text-slate-500">Open {item.job_reference ? item.job_reference : 'notification'}</span>
+          </button>
+        ))}
+      </section>
     </div>
   )
 }

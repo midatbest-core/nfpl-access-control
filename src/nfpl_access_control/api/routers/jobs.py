@@ -82,7 +82,9 @@ def _handle(error: Exception, session: DatabaseSession) -> None:
             },
         ) from error
     session.rollback()
-    if isinstance(error, WorkflowConflictError | StaleDataError | IntegrityError):
+    if isinstance(error, WorkflowConflictError):
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if isinstance(error, StaleDataError | IntegrityError):
         raise HTTPException(
             status_code=409, detail="The operation conflicts with current state."
         ) from error

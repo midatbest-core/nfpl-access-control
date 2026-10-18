@@ -45,6 +45,7 @@ class AuditEventResponse(BaseModel):
     id: str
     job_id: str | None
     actor_user_id: str
+    actor_display_name: str
     action: str
     occurred_at: datetime
     reason: str

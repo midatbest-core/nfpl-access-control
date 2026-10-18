@@ -32,13 +32,25 @@ describe('authentication screens', () => {
 
   it('logs in, loads the profile, and routes an Admin to relevant navigation', async () => {
     const admin = profile(['admin'])
-    const fetchMock = vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(jsonResponse({
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/v1/auth/login')) return jsonResponse({
         access_token: 'session-token',
         token_type: 'bearer',
         expires_at: expiresAt,
-      }))
-      .mockResolvedValueOnce(jsonResponse(admin))
+      })
+      if (url.endsWith('/v1/identity/me')) return jsonResponse(admin)
+      if (url.endsWith('/v1/admin/dashboard/overview')) return jsonResponse({
+        total_jobs: 0,
+        jobs_by_stage: {},
+        total_employees: 1,
+        employees_by_availability: { available: 1 },
+        pending_requests: 0,
+        reassignment_required_jobs: 0,
+      })
+      if (url.endsWith('/v1/admin/dashboard/urgent-requests')) return jsonResponse([])
+      throw new Error(`Unexpected request: ${url}`)
+    })
     window.history.replaceState({}, '', '/login')
     render(<App />)
 
@@ -70,6 +82,21 @@ describe('authentication screens', () => {
 
     expect(await screen.findByRole('heading', { name: 'Account unavailable' })).toBeInTheDocument()
     expect(screen.getByText(/does not reveal private account-state details/i)).toBeInTheDocument()
+  })
+
+  it('explains a 401 without disclosing whether the account or password exists', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      jsonResponse({ detail: 'Invalid email or password.' }, 401),
+    )
+    window.history.replaceState({}, '', '/login')
+    render(<App />)
+
+    await userEvent.type(screen.getByLabelText(/email address/i), 'admin@nfpl.test')
+    await userEvent.type(screen.getByLabelText(/^password$/i), 'Incorrect Demo Password 7')
+    await userEvent.click(screen.getByRole('button', { name: /sign in securely/i }))
+
+    expect(await screen.findByText(/temporarily locked after repeated failures/i)).toBeInTheDocument()
+    expect(screen.getByText(/verify the demo password and wait 15 minutes/i)).toBeInTheDocument()
   })
 
   it('validates registration and submits no role or privilege selection', async () => {

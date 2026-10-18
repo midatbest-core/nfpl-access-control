@@ -11,6 +11,7 @@ import type {
 } from '../api/contracts'
 import { useAuth } from '../auth/AuthContext'
 import { PageHeader } from '../components/AppShell'
+import { SearchField } from '../components/Controls'
 import { EmptyState, ErrorMessage, InlineLoader } from '../components/Feedback'
 import { StatusBadge } from '../components/StatusBadge'
 
@@ -36,19 +37,31 @@ export function ClientShipmentsPage() {
   const [stack, setStack] = useState<Array<string | undefined>>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setCursor(undefined)
+      setStack([])
+      setSearch(searchInput.trim())
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [searchInput])
 
   useEffect(() => {
     let current = true
-    api.clientJobs(token!, cursor)
+    api.clientJobs(token!, cursor, 25, search)
       .then((result) => { if (current) setData(result) })
       .catch((caught: Error) => { if (current) setError(caught.message) })
       .finally(() => { if (current) setLoading(false) })
     return () => { current = false }
-  }, [cursor, token])
+  }, [cursor, search, token])
 
   return (
     <div>
       <PageHeader eyebrow="Client workspace" title="My shipments" description="Track current progress for shipments belonging to your authorized client account." />
+      <div className="mb-5 max-w-xl"><SearchField value={searchInput} onChange={setSearchInput} label="Search shipments" placeholder="Search shipment reference or description" /></div>
       {error && <ErrorMessage message={error} />}
       {loading ? <InlineLoader label="Loading your shipments" /> : data?.items.length ? (
         <>
@@ -99,6 +112,10 @@ export function ClientShipmentDetailPage() {
   const [historyStack, setHistoryStack] = useState<Array<number | undefined>>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [queryCategory, setQueryCategory] = useState('delay')
+  const [queryExplanation, setQueryExplanation] = useState('')
+  const [queryMessage, setQueryMessage] = useState('')
+  const [querySubmitting, setQuerySubmitting] = useState(false)
 
   useEffect(() => {
     let current = true
@@ -118,6 +135,27 @@ export function ClientShipmentDetailPage() {
     return () => { current = false }
   }, [beforeVersion, jobId, token])
 
+  async function submitQuery() {
+    setError('')
+    setQueryMessage('')
+    if (!queryExplanation.trim()) {
+      setError('Explain your shipment concern before sending it.')
+      return
+    }
+    setQuerySubmitting(true)
+    try {
+      const receipt = await api.clientQuery(
+        token!, jobId, queryCategory, queryExplanation.trim(),
+      )
+      setQueryExplanation('')
+      setQueryMessage(`Your query was recorded and sent to ${receipt.delivered} authorized Admin${receipt.delivered === 1 ? '' : 's'}.`)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The shipment query could not be sent.')
+    } finally {
+      setQuerySubmitting(false)
+    }
+  }
+
   if (loading) return <InlineLoader label="Loading shipment status" />
   if (!detail || !status) {
     return <div><PageHeader eyebrow="Client workspace" title="Shipment unavailable" description="This shipment is not available to your client account." />{error && <ErrorMessage message={error} />}</div>
@@ -132,6 +170,16 @@ export function ClientShipmentDetailPage() {
         <div className="summary-card"><p className="summary-label">Last updated</p><p className="mt-2 text-sm">{displayDate(status.updated_at)}</p></div>
       </section>
       <section className="summary-card mt-5"><Progress percent={status.progress_percent} /></section>
+      <section className="summary-card mt-5">
+        <h2 className="text-lg font-semibold">Ask NFPL about this shipment</h2>
+        <p className="mt-1 text-sm text-slate-600">Raise a shipment-specific concern. Only authorized Admins receive it; internal staff history remains private.</p>
+        {queryMessage && <p className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800" role="status">{queryMessage}</p>}
+        <div className="mt-4 grid gap-4 md:grid-cols-[14rem_1fr]">
+          <label className="form-label">Concern<select className="field mt-1" value={queryCategory} onChange={(event) => setQueryCategory(event.target.value)}><option value="delay">Delay</option><option value="cancellation">Cancellation</option><option value="reopening">Reopening</option><option value="missing_update">Missing update</option><option value="other">Other concern</option></select></label>
+          <label className="form-label">Explanation<textarea className="field mt-1 min-h-24" value={queryExplanation} onChange={(event) => setQueryExplanation(event.target.value)} placeholder="Tell the operations team what you need clarified." /></label>
+        </div>
+        <button className="button-primary mt-4" disabled={querySubmitting} onClick={() => void submitQuery()}>{querySubmitting ? 'Sending…' : 'Send query to Admin'}</button>
+      </section>
       <section className="summary-card mt-5">
         <h2 className="text-lg font-semibold">Shipment history</h2>
         {history.length === 0 ? <p className="mt-3 text-sm text-slate-600">No client-visible updates are available.</p> : (

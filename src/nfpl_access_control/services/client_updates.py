@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from nfpl_access_control.authorization import AuthorizationDecision, AuthorizationEngine
 from nfpl_access_control.models import (
+    Client,
     Job,
     JobDirection,
     JobMode,
@@ -130,6 +131,7 @@ class ClientUpdateService:
         *,
         actor: User,
         cursor: str | None = None,
+        search: str | None = None,
         limit: int = 50,
         at: datetime | None = None,
     ) -> ClientShipmentPage:
@@ -138,12 +140,29 @@ class ClientUpdateService:
         if not 1 <= limit <= 100:
             raise ClientCursorError("Shipment limit must be between 1 and 100.")
         after_id = self._decode_job_cursor(cursor) if cursor else None
-        statement = select(Job).where(
-            AuthorizationEngine.job_scope_predicate(actor, Permission.JOB_VIEW, at=current_time),
-            AuthorizationEngine.job_scope_predicate(
-                actor, Permission.CLIENT_HISTORY_VIEW, at=current_time
-            ),
+        statement = (
+            select(Job)
+            .join(Client, Client.id == Job.client_id)
+            .where(
+                AuthorizationEngine.job_scope_predicate(
+                    actor, Permission.JOB_VIEW, at=current_time
+                ),
+                AuthorizationEngine.job_scope_predicate(
+                    actor, Permission.CLIENT_HISTORY_VIEW, at=current_time
+                ),
+            )
         )
+        normalized_search = search.strip() if search else ""
+        if normalized_search:
+            pattern = f"%{normalized_search}%"
+            statement = statement.where(
+                or_(
+                    Job.id.ilike(pattern),
+                    Job.reference.ilike(pattern),
+                    Client.name.ilike(pattern),
+                    Job.goods_description.ilike(pattern),
+                )
+            )
         if after_id is not None:
             statement = statement.where(Job.id > after_id)
         rows = list(self.session.scalars(statement.order_by(Job.id).limit(limit + 1)))

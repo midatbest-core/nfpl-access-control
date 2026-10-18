@@ -62,7 +62,7 @@ describe('Phase 6B Admin workflows', () => {
     await userEvent.type(screen.getByLabelText('Goods description'), 'Machine parts')
     await userEvent.click(screen.getByRole('button', { name: 'Create and show assignments' }))
 
-    expect(await screen.findByText('NFPL-104 was created')).toBeInTheDocument()
+    expect(await screen.findByText('Assignment & reallocation')).toBeInTheDocument()
     const call = fetchMock.mock.calls.find(([url, options]) => String(url).endsWith('/v1/jobs') && method(options) === 'POST')
     expect(call).toBeDefined()
     expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
@@ -120,6 +120,107 @@ describe('Phase 6B Admin workflows', () => {
     })
   })
 
+  it('prevents an identical active role grant and guides the Admin', async () => {
+    const employee = profile([], {
+      id: 'employee-2',
+      display_name: 'Asha Rao',
+      roles: [role('maker', { id: 'existing-maker-grant' })],
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/v1/identity/me')) return jsonResponse(admin)
+      if (url.includes('/v1/admin/employees?')) return jsonResponse({ items: [employee], total: 1, page: 1, limit: 25 })
+      if (url.endsWith('/v1/admin/reference-data')) return jsonResponse(references)
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.replaceState({}, '', '/admin/employees')
+    render(<App />)
+
+    await screen.findByText('Asha Rao')
+    await userEvent.type(screen.getByLabelText('Role grant reason'), 'Duplicate role')
+    await userEvent.click(screen.getByRole('button', { name: 'Grant scoped role' }))
+
+    expect(await screen.findByText(/already has the same active role and scope/i)).toBeInTheDocument()
+    expect(screen.getByText(/different scope, or revoke the existing assignment/i)).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/v1/admin/role-assignments'))).toBe(false)
+  })
+
+  it('reloads assignment suggestions after a conflict and preserves its explanation', async () => {
+    let suggestionLoads = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
+      const url = String(input)
+      if (url.endsWith('/v1/identity/me')) return jsonResponse(admin)
+      if (url.endsWith('/v1/admin/reference-data')) return jsonResponse(references)
+      if (url.endsWith('/v1/jobs') && method(options) === 'POST') return jsonResponse(job, 201)
+      if (url.includes('/assignment-suggestions')) {
+        suggestionLoads += 1
+        return jsonResponse({
+          maker: [{ responsibility: 'maker', user_id: 'maker-1', display_name: 'Maya Maker', pending_workload: 1 }],
+          checker: [],
+          filing_officer: [],
+        })
+      }
+      if (url.endsWith('/assignment') && method(options) === 'PUT') {
+        return jsonResponse({ detail: 'The responsibility changed concurrently.' }, 409)
+      }
+      throw new Error(`Unexpected request: ${method(options)} ${url}`)
+    })
+    window.history.replaceState({}, '', '/admin/jobs/new')
+    render(<App />)
+
+    await userEvent.type(await screen.findByLabelText('Shipment reference'), 'NFPL-104')
+    await userEvent.selectOptions(screen.getByLabelText('Client'), 'client-1')
+    await userEvent.selectOptions(screen.getByLabelText('Branch'), 'branch-1')
+    await userEvent.click(screen.getByRole('button', { name: 'Create and show assignments' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Maya Maker (1)' }))
+
+    expect(await screen.findByText(/responsibility changed concurrently/i)).toBeInTheDocument()
+    expect(screen.getByText(/reloaded suggestions are shown/i)).toBeInTheDocument()
+    await waitFor(() => expect(suggestionLoads).toBeGreaterThan(1))
+  })
+
+  it('lists searchable paginated jobs and opens selected audit history', async () => {
+    const jobs = Array.from({ length: 25 }, (_, index) => ({
+      ...job,
+      id: `job-${index + 1}`,
+      reference: `NFPL-${String(index + 1).padStart(3, '0')}`,
+      maker_user_id: null,
+      checker_user_id: null,
+      filing_officer_user_id: null,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-02T00:00:00Z',
+      archived_at: null,
+    }))
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/v1/identity/me')) return jsonResponse(admin)
+      if (url.includes('/v1/admin/jobs?')) return jsonResponse(jobs)
+      if (url.endsWith('/v1/jobs/job-1')) return jsonResponse({ ...job, id: 'job-1', reference: 'NFPL-001' })
+      if (url.endsWith('/v1/admin/jobs/job-1/audit')) {
+        return jsonResponse([{
+          id: 'audit-1', job_id: 'job-1', actor_user_id: 'admin-1',
+          actor_display_name: 'Morgan Lee',
+          action: 'job.created', occurred_at: '2026-01-01T00:00:00Z',
+          reason: 'Shipment created.', before_state: null, after_state: { stage: 'confirmed' },
+          authorization_context: {}, affected_job_version: 1, denied: false,
+        }])
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.replaceState({}, '', '/admin/audit')
+    render(<App />)
+
+    expect(await screen.findByText('NFPL-001')).toBeInTheDocument()
+    await userEvent.click(screen.getAllByRole('link', { name: 'View timeline' })[0])
+    expect(await screen.findByText('Immutable audit timeline')).toBeInTheDocument()
+    expect(screen.getByText('Shipment created.')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('link', { name: /back to audit history/i }))
+    await userEvent.type(screen.getByLabelText('Search audit jobs'), '104')
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('search=104'))).toBe(true))
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('offset=25'))).toBe(true))
+  })
+
   it('requires a reason and confirmation before revoking a role assignment', async () => {
     const assignment = role('maker', { id: 'grant-1' })
     const employee = profile([], { id: 'employee-2', roles: [assignment] })
@@ -146,7 +247,6 @@ describe('Phase 6B Admin workflows', () => {
   })
 
   it('uses request versions and shows a stale-decision response', async () => {
-    vi.spyOn(window, 'prompt').mockReturnValue('Independent review')
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
       const url = String(input)
       if (url.endsWith('/v1/identity/me')) return jsonResponse(admin)
@@ -170,11 +270,12 @@ describe('Phase 6B Admin workflows', () => {
     render(<App />)
 
     await userEvent.click(await screen.findByRole('button', { name: 'Approve' }))
+    await userEvent.type(screen.getByLabelText('Decision reason'), 'Independent review')
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }))
     expect(await screen.findByText('The operation conflicts with current state.')).toBeInTheDocument()
   })
 
   it('cancels a non-filed job using its optimistic version', async () => {
-    vi.spyOn(window, 'prompt').mockReturnValue('Duplicate shipment')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, options) => {
       const url = String(input)
       if (url.endsWith('/v1/identity/me')) return jsonResponse(admin)
@@ -185,8 +286,9 @@ describe('Phase 6B Admin workflows', () => {
     window.history.replaceState({}, '', '/admin/jobs/job-1')
     render(<App />)
 
+    await userEvent.type(await screen.findByLabelText('Required reason'), 'Duplicate shipment')
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel shipment' }))
-    await screen.findByText('Cancellation submitted.')
+    await screen.findByText('Shipment cancelled and audited.')
     const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/v1/jobs/job-1/cancel'))
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ expected_version: 1, reason: 'Duplicate shipment' })
   })

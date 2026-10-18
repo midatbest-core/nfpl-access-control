@@ -59,9 +59,10 @@ class WorkQueueService:
         actor: User,
         limit: int = 50,
         cursor: str | None = None,
+        search: str | None = None,
         now: datetime | None = None,
     ) -> list[WorkQueueItem]:
-        items, _ = self.page(actor=actor, limit=limit, cursor=cursor, now=now)
+        items, _ = self.page(actor=actor, limit=limit, cursor=cursor, search=search, now=now)
         return items
 
     def page(
@@ -70,6 +71,7 @@ class WorkQueueService:
         actor: User,
         limit: int = 50,
         cursor: str | None = None,
+        search: str | None = None,
         now: datetime | None = None,
     ) -> tuple[list[WorkQueueItem], str | None]:
         if not 1 <= limit <= 100:
@@ -98,6 +100,17 @@ class WorkQueueService:
             .join(Client, Client.id == Job.client_id)
             .join(Branch, Branch.id == Job.branch_id)
         )
+        normalized_search = search.strip() if search else ""
+        if normalized_search:
+            pattern = f"%{normalized_search}%"
+            statement = statement.where(
+                or_(
+                    Job.id.ilike(pattern),
+                    Job.reference.ilike(pattern),
+                    Client.name.ilike(pattern),
+                    Job.goods_description.ilike(pattern),
+                )
+            )
         if cursor is not None:
             priority, assigned_at, job_id = self._decode_cursor(cursor)
             statement = statement.where(
@@ -143,14 +156,37 @@ class WorkQueueService:
         next_cursor = self._encode_cursor(items[-1]) if len(rows) > limit and items else None
         return items, next_cursor
 
-    def count(self, *, actor: User, now: datetime | None = None) -> int:
+    def count(
+        self,
+        *,
+        actor: User,
+        search: str | None = None,
+        now: datetime | None = None,
+    ) -> int:
         current_time = now or datetime.now(UTC)
         if not self._active_staff(actor) or has_effective_absence(
             self.session, actor, current_time
         ):
             return 0
         queue = self._union(actor, current_time).subquery()
-        return int(self.session.scalar(select(func.count()).select_from(queue)) or 0)
+        statement = (
+            select(func.count())
+            .select_from(queue)
+            .join(Job, Job.id == queue.c.job_id)
+            .join(Client, Client.id == Job.client_id)
+        )
+        normalized_search = search.strip() if search else ""
+        if normalized_search:
+            pattern = f"%{normalized_search}%"
+            statement = statement.where(
+                or_(
+                    Job.id.ilike(pattern),
+                    Job.reference.ilike(pattern),
+                    Client.name.ilike(pattern),
+                    Job.goods_description.ilike(pattern),
+                )
+            )
+        return int(self.session.scalar(statement) or 0)
 
     @staticmethod
     def _active_staff(actor: User) -> bool:

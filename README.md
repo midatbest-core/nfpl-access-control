@@ -31,7 +31,7 @@ The completed Phase 6 adds Checker-owned generated checklist decisions,
 Filing Officer review/file/return actions, and Client Viewer shipment tracking
 with sanitized status, history, and incremental updates.
 Phase 7 adds a deterministic schema-checked demo generator, guarded atomic
-SQLite importer, secure demo login provisioning, reproducible large-data
+SQLite/PostgreSQL importer, secure demo login provisioning, reproducible large-data
 generation, and real-HTTP role/isolation verification.
 
 The original `NFPL_Access_Control_Assignment.pdf` is retained as the source
@@ -101,7 +101,7 @@ Configuration is read from the process environment:
 | --- | --- | --- |
 | `DATABASE_URL` | Deployment only | SQLite or PostgreSQL connection string; defaults to `sqlite:///./nfpl.db` locally. |
 | `NFPL_SQL_ECHO` | No | SQL logging; defaults to `false`. |
-| `NFPL_CORS_ALLOWED_ORIGINS` | Frontend only | Comma-separated explicit browser origins, for example `https://nfpl.vercel.app`. Wildcards are rejected. |
+| `NFPL_CORS_ALLOWED_ORIGINS` | Backend when called by a browser | Comma-separated explicit browser origins, for example `http://localhost:5173` or `https://nfpl.vercel.app`. Wildcards are rejected. |
 
 `NFPL_DATABASE_URL` remains a lower-priority compatibility fallback, but new
 deployments should use `DATABASE_URL`. Provider URLs beginning with
@@ -115,6 +115,7 @@ implicitly load local environment files.
 ~~~powershell
 .venv\Scripts\alembic upgrade head
 .venv\Scripts\nfpl-bootstrap-admin --email admin@example.test --name "NFPL Admin" --branch-code HQ --branch-name "Head Office"
+$env:NFPL_CORS_ALLOWED_ORIGINS = "http://localhost:5173"
 .venv\Scripts\uvicorn nfpl_access_control.main:app --reload
 .venv\Scripts\pytest
 .venv\Scripts\ruff check .
@@ -146,6 +147,31 @@ NFPL_DEMO_PASSWORD is used only by this explicit offline command. It must be
 identity receives its own uniquely salted scrypt hash. The Parser Service does
 not receive a password. Do not use the demo database or a shared demo password
 in production.
+
+For a fresh, already-migrated disposable PostgreSQL database, supply both
+secrets through the process environment and use the separate PostgreSQL-only
+command:
+
+~~~powershell
+$databaseUrlSecret = Read-Host "Disposable PostgreSQL DATABASE_URL" -AsSecureString
+$demoSecret = Read-Host "Disposable demo password" -AsSecureString
+$env:DATABASE_URL = [Net.NetworkCredential]::new("", $databaseUrlSecret).Password
+$env:NFPL_DEMO_PASSWORD = [Net.NetworkCredential]::new("", $demoSecret).Password
+.venv\Scripts\nfpl-sample-data seed-postgres --confirm-disposable-postgres
+Remove-Item Env:DATABASE_URL
+Remove-Item Env:NFPL_DEMO_PASSWORD
+~~~
+
+`seed-postgres` never runs migrations and never deletes data. It accepts only
+a PostgreSQL `DATABASE_URL`, requires the explicit disposable-target flag,
+then reuses the same atomic `import_dataset` path. Before inserting, that path
+requires Alembic head `20261017_0007`, validates the built-in roles and their
+permissions, and rejects the target if any application table already contains
+data (migration-installed role rows are the only exemption). The URL, password,
+and database host are not included in successful command output. A validation
+or insert failure rolls back the transaction. Review the target independently
+before confirming it is disposable; the command intentionally has no cleanup
+or overwrite mode.
 
 The standard dataset contains exactly 5 branches, 10 clients, 20 operational
 employees plus the bootstrap Admin, 10 client-viewer identities, one parser

@@ -152,6 +152,32 @@ def _assign_core(service: WorkflowService, values: dict[str, object]) -> None:
         )
 
 
+def test_checker_suggestions_exclude_the_actually_assigned_maker(session: Session) -> None:
+    values = _setup(session)
+    admin = values["admin"]
+    maker = values["maker"]
+    job = values["job"]
+    assert isinstance(admin, User) and isinstance(maker, User) and isinstance(job, Job)
+    _grant(session, maker, CHECKER_ROLE, admin)
+    alternate_maker = _user(session, "aaa-alternate-maker")
+    _grant(session, alternate_maker, MAKER_ROLE, admin)
+    service = WorkflowService(session)
+    service.assign(
+        actor=admin,
+        job=job,
+        responsibility=ResponsibilityType.MAKER,
+        target_user_id=maker.id,
+        reason="Assign overlapping-role employee as Maker",
+        now=NOW,
+    )
+
+    suggestions = service.suggestions(actor=admin, job=job, now=NOW)
+
+    checker_ids = {item.user_id for item in suggestions[ResponsibilityType.CHECKER]}
+    assert maker.id not in checker_ids
+    assert alternate_maker.id != maker.id
+
+
 def test_independent_prepare_check_file_and_atomic_audit(session: Session) -> None:
     values = _setup(session)
     service = WorkflowService(session)

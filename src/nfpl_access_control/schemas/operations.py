@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
@@ -43,6 +44,15 @@ class AbsenceOverrideRequest(StrictRequest):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+class ClientQueryCreate(StrictRequest):
+    category: Literal["delay", "cancellation", "reopening", "missing_update", "other"]
+    explanation: str = Field(min_length=1, max_length=1000)
+
+
+class AdminAttentionCreate(StrictRequest):
+    explanation: str = Field(min_length=1, max_length=1000)
+
+
 class AbsenceNominationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -73,6 +83,15 @@ class AbsenceOutcomeResponse(BaseModel):
     delegation_id: str | None
 
 
+class AbsenceCandidateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: str
+    display_name: str
+    eligible_assignment_count: int
+    total_assignment_count: int
+
+
 class NotificationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -84,6 +103,15 @@ class NotificationResponse(BaseModel):
     target_path: str
     created_at: datetime
     read_at: datetime | None
+
+
+class MarkAllReadResponse(BaseModel):
+    updated: int
+
+
+class AttentionReceiptResponse(BaseModel):
+    audit_event_id: str
+    delivered: int
 
 
 class WorkQueueResponse(BaseModel):
@@ -152,7 +180,9 @@ class AdminJobResponse(BaseModel):
     id: str
     reference: str
     client_id: str
+    client_name: str
     branch_id: str
+    branch_name: str
     stage: JobStage
     maker_user_id: str | None
     checker_user_id: str | None
@@ -161,3 +191,20 @@ class AdminJobResponse(BaseModel):
     updated_at: datetime
     archived_at: datetime | None
     version: int
+
+
+class AttentionJobResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    job_id: str
+    reference: str
+    client_name: str
+    branch_name: str
+    stage: JobStage
+    version: int
+    reasons: list[str]
+
+
+class AttentionJobPage(BaseModel):
+    items: list[AttentionJobResponse]
+    next_cursor: str | None

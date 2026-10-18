@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from nfpl_access_control.api.dependencies import CurrentActor, DatabaseSession
 from nfpl_access_control.authorization import AuthorizationEngine, Scope
-from nfpl_access_control.models import AuditEvent, Job, Permission
+from nfpl_access_control.models import AuditEvent, Job, Permission, User
 from nfpl_access_control.schemas.history import (
     AuditEventResponse,
     ClientShipmentPageResponse,
@@ -169,17 +169,19 @@ def job_audit(
     limit: int = Query(default=50, ge=1, le=100),
 ) -> list[AuditEventResponse]:
     _admin_job(session, actor, job_id)
-    events = session.scalars(
-        select(AuditEvent)
+    events = session.execute(
+        select(AuditEvent, User.display_name)
+        .join(User, User.id == AuditEvent.actor_user_id)
         .where(AuditEvent.job_id == job_id)
         .order_by(AuditEvent.occurred_at.desc(), AuditEvent.id.desc())
         .limit(limit)
-    )
+    ).all()
     return [
         AuditEventResponse(
             id=item.id,
             job_id=item.job_id,
             actor_user_id=item.actor_user_id,
+            actor_display_name=actor_display_name,
             action=item.action,
             occurred_at=item.occurred_at,
             reason=item.reason,
@@ -189,7 +191,7 @@ def job_audit(
             affected_job_version=item.affected_job_version,
             denied=item.denied,
         )
-        for item in events
+        for item, actor_display_name in events
     ]
 
 
@@ -240,10 +242,13 @@ def client_jobs(
     actor: CurrentActor,
     session: DatabaseSession,
     cursor: str | None = None,
+    search: str | None = Query(default=None, max_length=120),
     limit: int = Query(default=50, ge=1, le=100),
 ) -> ClientShipmentPageResponse:
     try:
-        page = ClientUpdateService(session).jobs(actor=actor, cursor=cursor, limit=limit)
+        page = ClientUpdateService(session).jobs(
+            actor=actor, cursor=cursor, search=search, limit=limit
+        )
     except ClientAccessError as error:
         raise HTTPException(status_code=403, detail="Client Viewer access required") from error
     except ClientCursorError as error:

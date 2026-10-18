@@ -10,7 +10,8 @@ import type {
 } from '../api/contracts'
 import { useAuth } from '../auth/AuthContext'
 import { PageHeader } from '../components/AppShell'
-import { ConfirmationDialog } from '../components/Controls'
+import { ConfirmationDialog, SearchField } from '../components/Controls'
+import { requestWorkspaceRefresh, WORKSPACE_REFRESH_EVENT } from '../events/workspace'
 import { EmptyState, ErrorMessage, InlineLoader } from '../components/Feedback'
 import { CheckerPanel, FilingPanel } from '../components/OperationalRoleActions'
 import { StatusBadge } from '../components/StatusBadge'
@@ -28,15 +29,33 @@ export function MyWorkPage() {
   const [cursorStack, setCursorStack] = useState<Array<string | undefined>>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const [search, setSearch] = useState('')
+  const [refreshVersion, setRefreshVersion] = useState(0)
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setCursor(undefined)
+      setCursorStack([])
+      setSearch(searchInput.trim())
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [searchInput])
+
+  useEffect(() => {
+    const refresh = () => setRefreshVersion((value) => value + 1)
+    window.addEventListener(WORKSPACE_REFRESH_EVENT, refresh)
+    return () => window.removeEventListener(WORKSPACE_REFRESH_EVENT, refresh)
+  }, [])
 
   useEffect(() => {
     let current = true
-    api.myWork(token!, cursor)
+    api.myWork(token!, cursor, 20, search)
       .then((result) => { if (current) setData(result) })
       .catch((caught: Error) => { if (current) setError(caught.message) })
       .finally(() => { if (current) setLoading(false) })
     return () => { current = false }
-  }, [token, cursor])
+  }, [token, cursor, search, refreshVersion])
 
   function nextPage() {
     if (!data?.next_cursor) return
@@ -61,6 +80,7 @@ export function MyWorkPage() {
         title="My work"
         description="Only shipments you can act on now are shown. Access is checked again when you open or update a shipment."
       />
+      <div className="mb-5 max-w-xl"><SearchField value={searchInput} onChange={setSearchInput} label="Search assigned jobs" placeholder="Search reference, client, or description" /></div>
       {error && <ErrorMessage message={error} />}
       {loading && <InlineLoader label="Loading your authorized work" />}
       {!loading && data && (
@@ -182,6 +202,7 @@ export function OperationalJobPage() {
       setJob(updated)
       setJustification('')
       setMessage(isCorrection ? 'Corrections resubmitted for independent verification.' : 'Shipment submitted for independent verification.')
+      requestWorkspaceRefresh()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Submission failed.')
     }
@@ -197,6 +218,7 @@ export function OperationalJobPage() {
       const request = await api.requestJobEdit(token!, job.id, editReason.trim())
       setEditReason('')
       setMessage(`Edit request submitted. Current status: ${request.status}.`)
+      requestWorkspaceRefresh()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Edit request failed.')
     }
@@ -249,6 +271,7 @@ export function OperationalJobPage() {
           onMessage={(value, isError) => {
             setError(isError ? value : '')
             setMessage(isError ? '' : value)
+            if (!isError) requestWorkspaceRefresh()
           }}
         />
       )}
@@ -261,6 +284,7 @@ export function OperationalJobPage() {
           onMessage={(value, isError) => {
             setError(isError ? value : '')
             setMessage(isError ? '' : value)
+            if (!isError) requestWorkspaceRefresh()
           }}
         />
       )}
@@ -285,6 +309,7 @@ export function NotificationsPage() {
   const [beforeStack, setBeforeStack] = useState<Array<string | undefined>>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
 
   async function load() {
     setLoading(true)
@@ -310,6 +335,7 @@ export function NotificationsPage() {
     try {
       if (!item.read_at) await api.markNotificationRead(token!, item.id)
       await load()
+      requestWorkspaceRefresh()
       if (open && item.job_id) {
         const path = user?.kind === 'client'
           ? `/client/shipments/${item.job_id}`
@@ -318,6 +344,25 @@ export function NotificationsPage() {
             : `/work/jobs/${item.job_id}`
         navigate(path)
       }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Notification update failed.')
+    }
+  }
+
+  async function readAll(clear: boolean) {
+    setError('')
+    setMessage('')
+    try {
+      const result = await api.markAllNotificationsRead(token!)
+      setUnread(0)
+      if (clear) {
+        setItems([])
+        setMessage('Notifications cleared from this view. Audit and notification records were preserved.')
+      } else {
+        setItems((current) => current.map((item) => ({ ...item, read_at: item.read_at ?? new Date().toISOString() })))
+        setMessage(`${result.updated} notification${result.updated === 1 ? '' : 's'} marked as read.`)
+      }
+      requestWorkspaceRefresh()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Notification update failed.')
     }
@@ -338,8 +383,9 @@ export function NotificationsPage() {
 
   return (
     <div>
-      <PageHeader eyebrow="Your workspace" title="Notifications" description={`${unread} unread actionable ${unread === 1 ? 'notification' : 'notifications'}.`} />
+      <PageHeader eyebrow="Your workspace" title="Notifications" description={`${unread} unread actionable ${unread === 1 ? 'notification' : 'notifications'}.`} action={<div className="flex flex-wrap gap-2"><button className="button-secondary" disabled={unread === 0} onClick={() => void readAll(false)}>Mark all read</button><button className="button-secondary" disabled={items.length === 0} onClick={() => void readAll(true)}>Clear all</button></div>} />
       {error && <ErrorMessage message={error} />}
+      {message && <p className="mb-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800" role="status">{message}</p>}
       {loading ? <InlineLoader label="Loading notifications" /> : items.length === 0 ? (
         <EmptyState title="No notifications" message="There are no authorized notifications on this page." />
       ) : (

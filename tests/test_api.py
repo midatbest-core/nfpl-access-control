@@ -1,8 +1,10 @@
 from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
-from nfpl_access_control.main import create_app
+from nfpl_access_control import main as main_module
+from nfpl_access_control.core.config import Settings
 from nfpl_access_control.models import User
 from tests.conftest import TEST_TOKEN
 
@@ -47,15 +49,38 @@ def test_me_rejects_invalid_credential_with_same_generic_response(api_client: Te
     assert response.json() == {"detail": "Invalid or expired authentication credential"}
 
 
-def test_configured_frontend_origin_receives_cors_headers() -> None:
-    with TestClient(create_app(cors_allowed_origins=("https://nfpl.vercel.app",))) as client:
+def test_configured_local_frontend_login_preflight_receives_cors_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    origin = "http://localhost:5173"
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        Settings(cors_allowed_origins=(origin,)),
+    )
+    with TestClient(main_module.create_app()) as client:
         response = client.options(
-            "/health",
+            "/v1/auth/login",
             headers={
-                "Origin": "https://nfpl.vercel.app",
-                "Access-Control-Request-Method": "GET",
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+        denied = client.options(
+            "/v1/auth/login",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type",
             },
         )
 
     assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == "https://nfpl.vercel.app"
+    assert response.headers["access-control-allow-origin"] == origin
+    assert "POST" in response.headers["access-control-allow-methods"]
+    allowed_headers = response.headers["access-control-allow-headers"].lower()
+    assert "authorization" in allowed_headers
+    assert "content-type" in allowed_headers
+    assert denied.status_code == 400
+    assert "access-control-allow-origin" not in denied.headers

@@ -33,7 +33,12 @@ def _raise_management_error(error: Exception, session: DatabaseSession) -> None:
             },
         ) from error
     session.rollback()
-    if isinstance(error, RoleManagementConflictError | StaleDataError | IntegrityError):
+    if isinstance(error, RoleManagementConflictError):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    if isinstance(error, StaleDataError | IntegrityError):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="The access change conflicts with current state.",

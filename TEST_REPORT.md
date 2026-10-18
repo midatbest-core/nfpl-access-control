@@ -1,6 +1,6 @@
 # NFPL Access Control Service - Test Report
 
-Report date: 2026-10-17  
+Report date: 2026-10-18
 Scope: Phases 1 through 7 and the zero-cost deployment amendment
 
 ## Environment
@@ -20,7 +20,76 @@ Dependencies were installed from `pyproject.toml` into the repository-local
 `.venv`. The Windows Store `python` alias was unusable, so setup used the
 installed Python 3.12 interpreter directly.
 
-## Phase 7 Final Verification
+## Live Workflow Integration Repair (2026-10-18)
+
+Commands actually executed:
+
+~~~powershell
+.venv\Scripts\python.exe -m pytest -q
+.venv\Scripts\ruff.exe check .
+.venv\Scripts\ruff.exe format --check .
+cd frontend
+npm test -- --run
+npm run typecheck
+npm run lint
+npm run build
+~~~
+
+Verified results:
+
+- Backend: **132 passed, 0 failed, 0 skipped**; one third-party
+  Starlette/httpx deprecation warning.
+- Ruff lint passed; all **96** Python files were formatted.
+- Frontend: **37 passed** across five Vitest files; TypeScript and ESLint
+  passed; the production Vite build passed with 42 transformed modules.
+- A disposable migrated SQLite demo database completed Admin login, shipment
+  creation, assignment suggestions, and Maker, Checker, and Filing Officer
+  assignment through the real API contracts. Neon was not mutated.
+- Read-only Neon diagnostics confirmed Alembic head 20261017_0007, active and
+  unlocked sampled demo accounts, no duplicate active identical grants, and
+  421 jobs (the standard 420 plus one later-created shipment). The later job
+  had Checker and Filing Officer assignments but no Maker assignment.
+- Regression coverage verifies precise duplicate-grant conflicts, exclusion
+  of the actual Maker from Checker suggestions, persistent privacy-safe login
+  failure guidance, refreshed assignment suggestions, duplicate-submit
+  prevention, and searchable/paginated Admin job selection for audit history.
+- Coverage was not rerun for this integration repair. No schema or migration
+  changed, and no live login or mutation was issued against Neon.
+
+## PostgreSQL Demo Import Guard Verification (2026-10-18)
+
+Commands actually executed:
+
+~~~powershell
+.venv\Scripts\python.exe -m pytest tests/test_sample_data.py -q
+.venv\Scripts\python.exe -m pytest -q
+.venv\Scripts\ruff.exe check .
+.venv\Scripts\ruff.exe format --check .
+.venv\Scripts\nfpl-sample-data.exe seed-postgres --help
+~~~
+
+Verified results:
+
+- Phase 7 focused tests: **15 passed, 0 failed**; one third-party
+  Starlette/httpx deprecation warning.
+- Full backend regression: **130 passed, 0 failed, 0 skipped**; the same
+  third-party warning.
+- Ruff lint passed; all **96** Python files were already formatted.
+- CLI help exposed the PostgreSQL-specific disposable confirmation flag.
+- Targeted tests verify that `seed-postgres` refuses a missing confirmation,
+  refuses a non-PostgreSQL URL, normalizes a provider-style PostgreSQL URL,
+  builds the 420-job standard dataset, calls the existing `import_dataset`,
+  disposes its engine, and does not print the URL host or either test secret.
+- An isolated migrated-database test verifies that a pre-existing custom role
+  is treated as application data: import is refused and no users or jobs are
+  inserted.
+- The PostgreSQL test uses an isolated fake engine/import boundary. No live
+  PostgreSQL or Neon connection was opened, and no import was executed.
+- No migration or application schema changed. Statement coverage was not
+  rerun for this narrow CLI change; the most recent measured coverage remains
+  the baseline result below.
+
+## Phase 7 Baseline Verification (2026-10-17)
 
 Commands actually executed:
 
@@ -91,8 +160,9 @@ match grants. Corrections preserve the live schema and security invariants.
 
 Remaining risks and limitations:
 
-- PostgreSQL/Neon import and query performance were not exercised; migration
-  and import verification used SQLite.
+- PostgreSQL/Neon import and query performance were not exercised; the guarded
+  PostgreSQL CLI path has unit coverage, while migration and full import
+  verification used SQLite.
 - The full 200,000-job files were generated but deliberately not imported, so
   authorization, queue, count, listing, and historical-query database latency
   at that scale remains unmeasured.

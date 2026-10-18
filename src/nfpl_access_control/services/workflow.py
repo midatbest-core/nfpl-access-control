@@ -916,14 +916,19 @@ class WorkflowService:
         if not 1 <= limit_per_role <= 20:
             raise WorkflowValidationError("Suggestion limit must be between 1 and 20.")
         result: dict[ResponsibilityType, list[AssignmentSuggestion]] = {}
-        selected_maker_ids: set[str] = set()
+        assigned_maker = self._responsibility(job.id, ResponsibilityType.MAKER)
+        selected_maker_ids = (
+            {assigned_maker.user_id}
+            if assigned_maker is not None and assigned_maker.user_id is not None
+            else set()
+        )
         for responsibility in ResponsibilityType:
             excluded = selected_maker_ids if responsibility is ResponsibilityType.CHECKER else set()
             candidates = self._eligible_candidates(
                 job, responsibility, current_time, limit_per_role, excluded
             )
             result[responsibility] = candidates
-            if responsibility is ResponsibilityType.MAKER and candidates:
+            if responsibility is ResponsibilityType.MAKER and not selected_maker_ids and candidates:
                 selected_maker_ids = {candidates[0].user_id}
         return result
 

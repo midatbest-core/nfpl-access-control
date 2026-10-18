@@ -16,13 +16,20 @@ from nfpl_access_control.models import (
     Job,
 )
 from nfpl_access_control.schemas.operations import (
+    AbsenceCandidateResponse,
     AbsenceNominationCreate,
     AbsenceNominationResponse,
     AbsenceOutcomeResponse,
     AbsenceOverrideRequest,
+    AdminAttentionCreate,
     AdminJobResponse,
     AdminReferenceDataResponse,
+    AttentionJobPage,
+    AttentionJobResponse,
+    AttentionReceiptResponse,
+    ClientQueryCreate,
     DashboardOverviewResponse,
+    MarkAllReadResponse,
     NotificationResponse,
     ReferenceRecordResponse,
     UrgentRequestResponse,
@@ -37,6 +44,12 @@ from nfpl_access_control.services.absence import (
     AbsenceService,
     AbsenceValidationError,
 )
+from nfpl_access_control.services.attention import (
+    AttentionAccessError,
+    AttentionConflictError,
+    AttentionService,
+    AttentionValidationError,
+)
 from nfpl_access_control.services.dashboard import DashboardAccessError, DashboardService
 from nfpl_access_control.services.notifications import (
     NotificationAccessError,
@@ -49,7 +62,7 @@ router = APIRouter(tags=["operations"])
 
 
 def _handle(error: Exception, session: DatabaseSession) -> None:
-    if isinstance(error, (AbsenceError, DashboardAccessError)):
+    if isinstance(error, (AbsenceError, AttentionAccessError, DashboardAccessError)):
         session.commit()
         raise HTTPException(
             status_code=403,
@@ -59,7 +72,10 @@ def _handle(error: Exception, session: DatabaseSession) -> None:
             },
         ) from error
     session.rollback()
-    if isinstance(error, (AbsenceConflictError, StaleDataError, IntegrityError)):
+    if isinstance(
+        error,
+        (AbsenceConflictError, AttentionConflictError, StaleDataError, IntegrityError),
+    ):
         raise HTTPException(status_code=409, detail=str(error)) from error
     if isinstance(error, NotificationAccessError):
         raise HTTPException(
@@ -100,6 +116,22 @@ def own_absence_nominations(
         .limit(limit)
     )
     return [AbsenceNominationResponse.model_validate(item) for item in records]
+
+
+@router.get(
+    "/absence-nominations/candidates",
+    response_model=list[AbsenceCandidateResponse],
+)
+def absence_candidates(
+    actor: CurrentActor,
+    session: DatabaseSession,
+    limit: int = Query(default=50, ge=1, le=100),
+) -> list[AbsenceCandidateResponse]:
+    try:
+        records = AbsenceService(session).candidates(actor=actor, limit=limit)
+        return [AbsenceCandidateResponse.model_validate(item) for item in records]
+    except AbsenceValidationError as error:
+        _handle(error, session)
 
 
 @router.post(
@@ -228,6 +260,15 @@ def unread_notification_count(actor: CurrentActor, session: DatabaseSession) -> 
     return {"count": NotificationService(session).unread_count(actor=actor)}
 
 
+@router.post("/notifications/read-all", response_model=MarkAllReadResponse)
+def mark_all_notifications_read(
+    actor: CurrentActor, session: DatabaseSession
+) -> MarkAllReadResponse:
+    updated = NotificationService(session).mark_all_read(actor=actor)
+    session.commit()
+    return MarkAllReadResponse(updated=updated)
+
+
 @router.post("/notifications/{notification_id}/read", response_model=NotificationResponse)
 def mark_notification_read(
     notification_id: str, actor: CurrentActor, session: DatabaseSession
@@ -243,21 +284,78 @@ def mark_notification_read(
         _handle(error, session)
 
 
+@router.post(
+    "/client/jobs/{job_id}/queries",
+    response_model=AttentionReceiptResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_client_query(
+    job_id: str,
+    request: ClientQueryCreate,
+    actor: CurrentActor,
+    session: DatabaseSession,
+) -> AttentionReceiptResponse:
+    job = session.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found or not visible")
+    try:
+        receipt = AttentionService(session).client_query(
+            actor=actor, job=job, **request.model_dump()
+        )
+        response = AttentionReceiptResponse(
+            audit_event_id=receipt.audit_event_id, delivered=receipt.delivered
+        )
+        session.commit()
+        return response
+    except AttentionAccessError as error:
+        session.commit()
+        raise HTTPException(status_code=404, detail="Job not found or not visible") from error
+    except (AttentionValidationError, AttentionConflictError) as error:
+        _handle(error, session)
+
+
+@router.post(
+    "/admin/jobs/{job_id}/attention",
+    response_model=AttentionReceiptResponse,
+)
+def send_admin_attention(
+    job_id: str,
+    request: AdminAttentionCreate,
+    actor: CurrentActor,
+    session: DatabaseSession,
+) -> AttentionReceiptResponse:
+    job = session.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        receipt = AttentionService(session).admin_attention(
+            actor=actor, job=job, **request.model_dump()
+        )
+        response = AttentionReceiptResponse(
+            audit_event_id=receipt.audit_event_id, delivered=receipt.delivered
+        )
+        session.commit()
+        return response
+    except (AttentionAccessError, AttentionValidationError, AttentionConflictError) as error:
+        _handle(error, session)
+
+
 @router.get("/my-work", response_model=WorkQueuePage)
 def my_work(
     actor: CurrentActor,
     session: DatabaseSession,
     limit: int = Query(default=50, ge=1, le=100),
     cursor: str | None = None,
+    search: str | None = Query(default=None, max_length=120),
 ) -> WorkQueuePage:
     service = WorkQueueService(session)
     try:
-        items, next_cursor = service.page(actor=actor, limit=limit, cursor=cursor)
+        items, next_cursor = service.page(actor=actor, limit=limit, cursor=cursor, search=search)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return WorkQueuePage(
         items=[WorkQueueResponse.model_validate(item) for item in items],
-        count=service.count(actor=actor),
+        count=service.count(actor=actor, search=search),
         limit=limit,
         next_cursor=next_cursor,
     )
@@ -324,7 +422,9 @@ def admin_jobs(
             id=job.id,
             reference=job.reference,
             client_id=job.client_id,
+            client_name=client_name,
             branch_id=job.branch_id,
+            branch_name=branch_name,
             stage=job.stage,
             maker_user_id=maker,
             checker_user_id=checker,
@@ -334,8 +434,27 @@ def admin_jobs(
             archived_at=job.archived_at,
             version=job.version,
         )
-        for job, maker, checker, filer in rows
+        for job, maker, checker, filer, client_name, branch_name in rows
     ]
+
+
+@router.get("/admin/jobs-requiring-attention", response_model=AttentionJobPage)
+def jobs_requiring_attention(
+    actor: CurrentActor,
+    session: DatabaseSession,
+    limit: int = Query(default=25, ge=1, le=100),
+    cursor: str | None = None,
+) -> AttentionJobPage:
+    try:
+        items, next_cursor = DashboardService(session).attention_jobs(
+            actor=actor, limit=limit, cursor=cursor
+        )
+    except (DashboardAccessError, ValueError) as error:
+        _handle(error, session)
+    return AttentionJobPage(
+        items=[AttentionJobResponse.model_validate(item) for item in items],
+        next_cursor=next_cursor,
+    )
 
 
 @router.post("/admin/jobs/{job_id}/archive", response_model=AdminJobResponse)
@@ -358,7 +477,9 @@ def archive_job(
             id=job.id,
             reference=job.reference,
             client_id=job.client_id,
+            client_name=job.client.name,
             branch_id=job.branch_id,
+            branch_name=job.branch.name,
             stage=job.stage,
             maker_user_id=None,
             checker_user_id=None,

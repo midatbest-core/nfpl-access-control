@@ -4,7 +4,6 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 
 import { api, ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import { landingPath } from '../auth/roles'
 import { ErrorMessage } from '../components/Feedback'
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -30,7 +29,7 @@ export function LoginPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(() => new URLSearchParams(location.search).get('email') ?? '')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -43,11 +42,12 @@ export function LoginPage() {
     if (!password) return setError('Enter your password.')
     setSubmitting(true)
     try {
-      const profile = await login({ email: email.trim().toLowerCase(), password })
-      navigate(landingPath(profile), { replace: true })
+      await login({ email: email.trim().toLowerCase(), password })
     } catch (caught) {
       if (caught instanceof ApiError && caught.status === 403) {
         navigate('/account-status', { replace: true, state: { source: 'login' } })
+      } else if (caught instanceof ApiError && caught.status === 401) {
+        setError('The email or password is incorrect, or sign-in is temporarily locked after repeated failures. Verify the demo password and wait 15 minutes after five unsuccessful attempts.')
       } else {
         setError(caught instanceof Error ? caught.message : 'Login failed. Please try again.')
       }
@@ -66,6 +66,7 @@ export function LoginPage() {
         <button className="button-primary w-full" type="submit" disabled={submitting}>{submitting ? 'Signing in...' : 'Sign in securely'}</button>
       </form>
       <p className="mt-7 text-center text-sm text-slate-600">New to NFPL? <Link className="font-semibold text-teal-700 hover:text-teal-900" to="/register">Request an employee account</Link></p>
+      <Link className="button-secondary mt-4 w-full" to="/demo-accounts">Explore Demo Accounts</Link>
     </AuthFrame>
   )
 }

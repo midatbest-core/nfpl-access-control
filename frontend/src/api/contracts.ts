@@ -70,7 +70,7 @@ export interface DashboardOverview { total_jobs: number; jobs_by_stage: Record<s
 export interface UrgentRequest { request_type: string; request_id: string; requested_at: string; requester_user_id: string; reason: string; job_id: string | null; version: number }
 export interface ReferenceRecord { id: string; code: string; name: string }
 export interface ReferenceData { clients: ReferenceRecord[]; branches: ReferenceRecord[] }
-export interface AdminJob { id: string; reference: string; client_id: string; branch_id: string; stage: string; maker_user_id: string | null; checker_user_id: string | null; filing_officer_user_id: string | null; created_at: string; updated_at: string; archived_at: string | null; version: number }
+export interface AdminJob { id: string; reference: string; client_id: string; client_name: string; branch_id: string; branch_name: string; stage: string; maker_user_id: string | null; checker_user_id: string | null; filing_officer_user_id: string | null; created_at: string; updated_at: string; archived_at: string | null; version: number }
 export interface Job {
   id: string
   reference: string
@@ -115,7 +115,26 @@ export interface JobCreate {
 }
 export interface EmployeePage { items: EmployeeProfile[]; total: number; page: number; limit: number }
 export interface Suggestion { responsibility: string; user_id: string; display_name: string; pending_workload: number }
-export interface AuditEvent { id: string; job_id: string | null; actor_user_id: string; action: string; occurred_at: string; reason: string; denied: boolean }
+export interface AuditEvent {
+  id: string
+  job_id: string | null
+  actor_user_id: string
+  actor_display_name: string
+  action: string
+  occurred_at: string
+  reason: string
+  before_state: Record<string, unknown> | null
+  after_state: Record<string, unknown> | null
+  authorization_context: Record<string, unknown>
+  affected_job_version: number | null
+  denied: boolean
+}
+export interface AbsenceCandidate { user_id: string; display_name: string; eligible_assignment_count: number; total_assignment_count: number }
+export interface AbsenceNomination { id: string; requester_user_id: string; nominee_user_id: string; valid_from: string; valid_until: string; reason: string; status: string; requested_at: string; decided_by_user_id: string | null; decided_at: string | null; decision_reason: string | null; version: number }
+export interface AbsenceOutcome { id: string; nomination_id: string; job_id: string; responsibility: string; nominee_user_id: string; outcome: string; reason: string; delegation_id: string | null }
+export interface AttentionJob { job_id: string; reference: string; client_name: string; branch_name: string; stage: string; version: number; reasons: string[] }
+export interface AttentionJobPage { items: AttentionJob[]; next_cursor: string | null }
+export interface AttentionReceipt { audit_event_id: string; delivered: number }
 export interface WorkQueueItem {
   job_id: string
   reference: string

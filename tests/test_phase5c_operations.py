@@ -40,6 +40,11 @@ from nfpl_access_control.models import (
     UserKind,
 )
 from nfpl_access_control.services.absence import AbsenceService
+from nfpl_access_control.services.attention import (
+    AttentionAccessError,
+    AttentionConflictError,
+    AttentionService,
+)
 from nfpl_access_control.services.dashboard import DashboardAccessError, DashboardService
 from nfpl_access_control.services.history import HistoryService
 from nfpl_access_control.services.notifications import (
@@ -519,6 +524,135 @@ def test_notifications_are_deduplicated_audited_and_current_access_is_rechecked(
     assert first not in notifications.list_for_actor(actor=maker, now=NOW)
     with pytest.raises(NotificationAccessError):
         notifications.mark_read(actor=maker, notification_id=first.id, now=NOW)
+
+
+def test_queue_search_uses_database_filters_and_matching_count(session: Session) -> None:
+    values = _setup(session)
+    maker = values["maker"]
+    job = values["job"]
+    assert isinstance(maker, User) and isinstance(job, Job)
+    queue = WorkQueueService(session)
+
+    for search in ("P5C-001", job.id, "Phase 5C Client", "Test goods"):
+        items, cursor = queue.page(actor=maker, search=search, now=NOW)
+        assert [item.job_id for item in items] == [job.id]
+        assert cursor is None
+        assert queue.count(actor=maker, search=search, now=NOW) == 1
+
+    assert queue.page(actor=maker, search="not visible", now=NOW) == ([], None)
+    assert queue.count(actor=maker, search="not visible", now=NOW) == 0
+
+
+def test_admin_attention_queue_explains_missing_and_uncovered_responsibility(
+    session: Session,
+) -> None:
+    values = _setup(session)
+    admin = values["admin"]
+    maker = values["maker"]
+    job = values["job"]
+    assert isinstance(admin, User) and isinstance(maker, User) and isinstance(job, Job)
+    maker.availability = EmployeeAvailability.ABSENT
+    checker = session.scalar(
+        select(JobResponsibility).where(
+            JobResponsibility.job_id == job.id,
+            JobResponsibility.responsibility == ResponsibilityType.CHECKER,
+        )
+    )
+    assert checker is not None
+    checker.user_id = None
+    session.flush()
+
+    items, cursor = DashboardService(session).attention_jobs(actor=admin, now=NOW)
+
+    assert cursor is None
+    assert [item.job_id for item in items] == [job.id]
+    assert any("Missing Checker" in reason for reason in items[0].reasons)
+    assert any("absent without an effective replacement" in reason for reason in items[0].reasons)
+    assert DashboardService(session).overview(actor=admin, now=NOW).reassignment_required_jobs == 1
+
+
+def test_mark_all_read_preserves_notifications_and_audit(session: Session) -> None:
+    values = _setup(session)
+    admin = values["admin"]
+    maker = values["maker"]
+    job = values["job"]
+    assert isinstance(admin, User) and isinstance(maker, User) and isinstance(job, Job)
+    service = NotificationService(session)
+    notification = service.create(
+        actor=admin,
+        recipient_user_id=maker.id,
+        event_type="attention",
+        message="Please review the shipment.",
+        target_path=f"/v1/jobs/{job.id}",
+        dedupe_key="mark-all-read-regression",
+        job=job,
+        now=NOW,
+    )
+    assert notification is not None
+    audit_count = len(list(session.scalars(select(AuditEvent))))
+
+    assert service.mark_all_read(actor=maker, now=NOW + timedelta(seconds=1)) >= 1
+    session.expire(notification)
+    assert notification.read_at == NOW + timedelta(seconds=1)
+    assert service.unread_count(actor=maker, now=NOW + timedelta(seconds=1)) == 0
+    assert session.get(Notification, notification.id) is notification
+    assert len(list(session.scalars(select(AuditEvent)))) == audit_count
+
+
+def test_client_query_and_admin_attention_are_scoped_audited_and_deduplicated(
+    session: Session,
+) -> None:
+    values = _setup(session)
+    admin = values["admin"]
+    job = values["job"]
+    assert isinstance(admin, User) and isinstance(job, Job)
+    client_viewer = _user(session, "phase5c-client")
+    client_viewer.kind = UserKind.CLIENT
+    outsider = _user(session, "phase5c-outsider")
+    outsider.kind = UserKind.CLIENT
+    _grant(session, client_viewer, CLIENT_VIEWER_ROLE, admin)
+    service = AttentionService(session)
+
+    receipt = service.client_query(
+        actor=client_viewer,
+        job=job,
+        category="delay",
+        explanation="Please clarify the expected filing date.",
+        now=NOW,
+    )
+    assert receipt.delivered >= 1
+    assert session.get(AuditEvent, receipt.audit_event_id).action == "client.query_raised"
+    assert session.scalar(
+        select(Notification).where(
+            Notification.recipient_user_id == admin.id,
+            Notification.event_type == "client_query",
+        )
+    )
+    with pytest.raises(AttentionConflictError):
+        service.client_query(
+            actor=client_viewer,
+            job=job,
+            category="delay",
+            explanation="Please clarify the expected filing date.",
+            now=NOW + timedelta(seconds=1),
+        )
+    with pytest.raises(AttentionAccessError):
+        service.client_query(
+            actor=outsider,
+            job=job,
+            category="delay",
+            explanation="Attempt outside client scope.",
+            now=NOW,
+        )
+
+    attention = service.admin_attention(
+        actor=admin,
+        job=job,
+        explanation="Resolve the client delay query today.",
+        now=NOW + timedelta(minutes=1),
+    )
+    assert attention.delivered == 3
+    assert session.get(AuditEvent, attention.audit_event_id).action == "admin.attention_sent"
 
 
 def test_notification_and_audit_rollback_leave_no_orphans(session: Session) -> None:

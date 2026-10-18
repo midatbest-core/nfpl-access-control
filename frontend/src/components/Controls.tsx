@@ -83,12 +83,13 @@ export function PaginatedList<T>({
   )
 }
 
-export function NotificationBell({ onClick }: { onClick: () => void }) {
+export function NotificationBell({ onClick, count = 0 }: { onClick: () => void; count?: number }) {
   return (
     <button type="button" onClick={onClick} className="relative grid h-10 w-10 place-items-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-ink" aria-label="Open notifications" title="Open notifications">
       <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" />
       </svg>
+      {count > 0 && <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full bg-coral px-1 text-[10px] font-bold text-white" aria-label={`${count} unread notifications`}>{count > 99 ? '99+' : count}</span>}
     </button>
   )
 }

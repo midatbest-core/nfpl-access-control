@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from alembic.config import Config
@@ -30,6 +31,7 @@ from nfpl_access_control.models import (
     Role,
     User,
 )
+from nfpl_access_control.sample_data import cli as sample_data_cli
 from nfpl_access_control.sample_data.benchmark import (
     BENCHMARK_STREAMS,
     BenchmarkConfig,
@@ -47,6 +49,89 @@ from nfpl_access_control.sample_data.writers import (
 from nfpl_access_control.services.history import HistoryService
 
 DEMO_PASSWORD = "Phase7-Disposable-Test-Only!"
+
+
+def test_postgres_seed_requires_confirmation_and_uses_environment_without_leaking(
+    monkeypatch, capsys
+) -> None:
+    raw_url = "postgresql://demo-user:demo-url-secret@neon.invalid/nfpl_demo?sslmode=require"
+    captured: dict[str, object] = {}
+
+    class FakeEngine:
+        disposed = False
+
+        def dispose(self) -> None:
+            self.disposed = True
+
+    fake_engine = FakeEngine()
+
+    def fake_create_engine(database_url: str) -> FakeEngine:
+        captured["database_url"] = database_url
+        return fake_engine
+
+    def fake_import(engine, dataset, *, demo_password: str):
+        captured["engine"] = engine
+        captured["jobs"] = len(dataset.tables["jobs"])
+        captured["demo_password"] = demo_password
+        return SimpleNamespace(total_rows=5_835)
+
+    monkeypatch.setenv("DATABASE_URL", raw_url)
+    monkeypatch.setenv("NFPL_DEMO_PASSWORD", DEMO_PASSWORD)
+    monkeypatch.setattr(sample_data_cli, "create_database_engine", fake_create_engine)
+    monkeypatch.setattr(sample_data_cli, "import_dataset", fake_import)
+
+    with pytest.raises(SampleImportError, match="confirm-disposable-postgres"):
+        sample_data_cli._run_postgres_seed(SimpleNamespace(confirm_disposable_postgres=False))
+
+    sample_data_cli._run_postgres_seed(SimpleNamespace(confirm_disposable_postgres=True))
+
+    assert captured["database_url"] == raw_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    assert captured["engine"] is fake_engine
+    assert captured["jobs"] == 420
+    assert captured["demo_password"] == DEMO_PASSWORD
+    assert fake_engine.disposed
+    output = capsys.readouterr().out
+    assert "demo-url-secret" not in output
+    assert "neon.invalid" not in output
+    assert DEMO_PASSWORD not in output
+
+
+def test_postgres_seed_rejects_non_postgresql_database_url(monkeypatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///./disposable.db")
+    monkeypatch.setenv("NFPL_DEMO_PASSWORD", DEMO_PASSWORD)
+    with pytest.raises(SampleImportError, match="PostgreSQL DATABASE_URL only"):
+        sample_data_cli._run_postgres_seed(SimpleNamespace(confirm_disposable_postgres=True))
+
+
+def test_import_refuses_preexisting_custom_role_without_inserting_data(tmp_path) -> None:
+    database_path = tmp_path / "custom-role.db"
+    database_url = f"sqlite:///{database_path.as_posix()}"
+    config = Config("alembic.ini")
+    config.attributes["database_url"] = database_url
+    command.upgrade(config, "head")
+    engine = create_database_engine(database_url)
+    factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    try:
+        with factory() as session:
+            session.add(
+                Role(
+                    slug="preexisting-custom-role",
+                    name="Preexisting Custom Role",
+                    description="Application data that makes the target non-fresh.",
+                    is_system=False,
+                )
+            )
+            session.commit()
+
+        with pytest.raises(SampleImportError, match="application-defined roles"):
+            import_dataset(engine, DatasetBuilder().build(), demo_password=DEMO_PASSWORD)
+
+        with factory() as session:
+            assert session.scalar(select(func.count()).select_from(User)) == 0
+            assert session.scalar(select(func.count()).select_from(Job)) == 0
+            assert session.scalar(select(func.count()).select_from(Role)) == 7
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture(scope="module")

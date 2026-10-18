@@ -1,6 +1,9 @@
 # AI Assistance Disclosure (LLM.md)
 
 This document discloses the role, extent, and boundaries of Large Language Model (LLM) and generative AI assistance in the research, design, implementation, testing, and documentation of the **NFPL Access Control Service**.
+* **Repository:** [https://github.com/midatbest-core/nfpl-access-control](https://github.com/midatbest-core/nfpl-access-control)
+* **Official Design Document (2–4 Pages):** [NFPL Access Control — System Design Document](https://docs.google.com/document/d/1CXhjgqobfmPf3qqq2D8AbXM_bI7SYxaYGbs-hsZCZTQ/edit?tab=t.0)
+* **Project Guide:** [README.md](file:///c:/Users/Admin/rbac/README.md)
 
 ---
 

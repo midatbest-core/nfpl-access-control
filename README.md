@@ -1,6 +1,10 @@
 # NFPL Access Control Service
 ### Zero-Trust, Scope-Aware Authorization Monolith for Customs Brokerage Operations
 
+* **GitHub Repository:** [https://github.com/midatbest-core/nfpl-access-control](https://github.com/midatbest-core/nfpl-access-control)
+* **Official Design Document (2–4 Pages):** [NFPL Access Control — System Design Document](https://docs.google.com/document/d/1CXhjgqobfmPf3qqq2D8AbXM_bI7SYxaYGbs-hsZCZTQ/edit?tab=t.0)
+* **AI Assistance Disclosure:** [`LLM.md`](file:///c:/Users/Admin/rbac/LLM.md)
+
 > **Evaluator Quick Access:**  
 > **Shared Evaluation Demo Password:** `123123123123`  
 > Pre-seeded interactive personas (Admin, Maker, Checker, Filing Officer, Client Viewer) are ready for immediate evaluation in both the local and cloud environments. See [Chapter 7](#chapter-7--sample-data-meet-the-fictional-nfpl-team) for the full account directory.
@@ -348,8 +352,8 @@ Follow these verified steps to run the complete solution locally from scratch.
 
 #### 1. Clone & Setup Backend Virtual Environment
 ```bash
-git clone <repo-url>
-cd rbac
+git clone https://github.com/midatbest-core/nfpl-access-control.git
+cd nfpl-access-control
 
 # Create Python virtual environment
 python -m venv .venv

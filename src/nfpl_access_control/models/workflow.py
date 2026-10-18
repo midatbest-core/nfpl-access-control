@@ -157,6 +157,8 @@ class ExceptionalTransitionRequest(UuidPrimaryKeyMixin, Base):
     )
     decided_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
 
+    job = relationship("Job")
+
 
 class JobEditRequest(UuidPrimaryKeyMixin, Base):
     __tablename__ = "job_edit_requests"

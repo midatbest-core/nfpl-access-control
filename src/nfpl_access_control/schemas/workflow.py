@@ -136,12 +136,32 @@ class JobResponse(BaseModel):
 
     @classmethod
     def from_job(cls, job: Job) -> JobResponse:
+        data = {
+            field: getattr(job, field)
+            for field in cls.model_fields
+            if field not in {"client_name", "branch_name"}
+        }
+        checklist_data = data.get("checklist_data")
+        if not isinstance(checklist_data, dict):
+            checklist_data = {}
+        items = checklist_data.get("items")
+        if not isinstance(items, list) or (items and not isinstance(items[0], dict)):
+            from nfpl_access_control.services.workflow import WorkflowService
+
+            template = WorkflowService._checklist_template(job)
+            checklist_data = {
+                **checklist_data,
+                "revision": job.checklist_revision,
+                "mode": job.mode.value,
+                "direction": job.direction.value,
+                "items": [
+                    {**item, "status": None, "justification": None}
+                    for item in template
+                ],
+            }
+            data["checklist_data"] = checklist_data
         return cls(
-            **{
-                field: getattr(job, field)
-                for field in cls.model_fields
-                if field not in {"client_name", "branch_name"}
-            },
+            **data,
             client_name=job.client.name,
             branch_name=job.branch.name,
         )

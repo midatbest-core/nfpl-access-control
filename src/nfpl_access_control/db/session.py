@@ -15,7 +15,7 @@ def create_database_engine(database_url: str, *, echo: bool = False) -> Engine:
     pool_options = (
         {}
         if database_url.startswith("sqlite")
-        else {"pool_size": 5, "max_overflow": 0, "pool_recycle": 300}
+        else {"pool_size": 5, "max_overflow": 0, "pool_timeout": 10, "pool_recycle": 300}
     )
     engine = create_engine(
         database_url,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from nfpl_access_control.authorization import (
@@ -33,6 +33,7 @@ from nfpl_access_control.models import (
     JobResponsibility,
     JobResponsibilityEvent,
     JobStage,
+    Notification,
     Permission,
     ResponsibilityEventType,
     ResponsibilityType,
@@ -573,6 +574,15 @@ class WorkflowService:
             dedupe_key=f"edit-request:{request.id}:decision",
             job=job,
             now=current_time,
+        )
+        self.session.execute(
+            update(Notification)
+            .where(
+                Notification.job_id == job.id,
+                Notification.event_type.in_(["edit_requested", "job_edit_requested"]),
+                Notification.read_at.is_(None),
+            )
+            .values(read_at=current_time)
         )
         self.session.flush()
         return job
@@ -1137,6 +1147,24 @@ class WorkflowService:
                 "request_id": request.id,
                 "requested_by_user_id": request.requested_by_user_id,
             },
+        )
+        self.session.execute(
+            update(Notification)
+            .where(
+                Notification.job_id == job.id,
+                Notification.event_type.in_(
+                    [
+                        "exception_requested",
+                        "exceptional_transition",
+                        "job.cancel_requested",
+                        "job.reopen_requested",
+                        "client_query",
+                        "admin_attention",
+                    ]
+                ),
+                Notification.read_at.is_(None),
+            )
+            .values(read_at=current_time)
         )
         self.session.flush()
         return job

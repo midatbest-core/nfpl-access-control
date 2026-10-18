@@ -274,7 +274,7 @@ class DashboardService:
                 item.requested_by_user_id,
                 item.reason,
                 item.job_id,
-                item.job.version,
+                item.job.version if getattr(item, "job", None) else 1,
             )
             for item in self.session.scalars(
                 select(ExceptionalTransitionRequest)

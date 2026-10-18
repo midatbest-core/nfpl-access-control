@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from nfpl_access_control.authorization import (
@@ -26,6 +26,7 @@ from nfpl_access_control.models import (
     JobResponsibility,
     JobResponsibilityEvent,
     JobStage,
+    Notification,
     Permission,
     ResponsibilityEventType,
     ResponsibilityType,
@@ -319,6 +320,14 @@ class AbsenceService:
             target_path="/v1/absence-nominations",
             dedupe_key=f"absence:{nomination.id}:decision:{nomination.version}",
             now=current_time,
+        )
+        self.session.execute(
+            update(Notification)
+            .where(
+                Notification.dedupe_key.like(f"absence:{nomination.id}:%"),
+                Notification.read_at.is_(None),
+            )
+            .values(read_at=current_time)
         )
         return nomination
 
